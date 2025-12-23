@@ -1,94 +1,93 @@
-PROGRAM -> (IMPORT_STMT)* (DECLARATION)*
-IMPORT_STMT -> "import" STRING_LIT
+// -- Program Structure
+PROGRAM         -> (IMPORT_STMT)* (DECLARATION)*
+IMPORT_STMT     -> "import" STRING_LIT
+DECLARATION     -> FUNCTION | VAR_DECLARATION | STRUCT_DEF
 
-DECLARATION -> FUNCTION | VAR_DECLARATION | STRUCT_DEF
+// -- Types
+TYPE            -> PRIMITIVE_TYPE | FUNCTION_TYPE | ARRAY_TYPE | CUSTOM_TYPE
+PRIMITIVE_TYPE  -> "int" | "float" | "bool" | "string" | "char" | "void"
+FUNCTION_TYPE   -> "(" TYPE_LIST ")" ":" TYPE
+TYPE_LIST       -> TYPE ("," TYPE)* | ε
+ARRAY_TYPE      -> "[" TYPE "]"
+CUSTOM_TYPE     -> IDENTIFIER
 
-KEYWORD -> "fn" | "let" | "if" | "else if" | "else" | "while" | "for"
-         | "return" | "import" | "in" | "true" | "false" | "struct"
+// -- Definitions
+STRUCT_DEF      -> "struct" IDENTIFIER "{" STRUCT_FIELDS "}"
+STRUCT_FIELDS   -> STRUCT_FIELD ("," STRUCT_FIELD)* ","? | ε
+STRUCT_FIELD    -> IDENTIFIER ":" TYPE
 
-TYPE -> PRIMITIVE_TYPE | FUNCTION_TYPE | ARRAY_TYPE | CUSTOM_TYPE
-PRIMITIVE_TYPE -> "int" | "float" | "bool" | "string" | "char" | "void"
-FUNCTION_TYPE -> "(" TYPE_LIST ")" ":" TYPE
-TYPE_LIST -> TYPE ("," TYPE)* | ε
-ARRAY_TYPE -> "[" TYPE "]"
-CUSTOM_TYPE -> IDENTIFIER
+FUNCTION        -> "fn" IDENTIFIER "(" PARAMETERS ")" ":" TYPE BLOCK
+PARAMETERS      -> PARAMETER ("," PARAMETER)* | ε
+PARAMETER       -> IDENTIFIER ":" TYPE
 
-STRUCT_DEF -> "struct" IDENTIFIER "{" STRUCT_FIELDS "}"
-STRUCT_FIELDS -> STRUCT_FIELD ("," STRUCT_FIELD)* ","? | ε
-STRUCT_FIELD -> IDENTIFIER ":" TYPE
+// -- Statements
+BLOCK           -> "{" STATEMENTS "}"
+STATEMENTS      -> (STATEMENT)*
+STATEMENT       -> BLOCK_STMT | SIMPLE_STMT ";"
+BLOCK_STMT      -> IF_STATEMENT | WHILE_STATEMENT | FOR_LOOP
+SIMPLE_STMT     -> VAR_DECLARATION | EXPRESSION | RETURN_STATEMENT
 
+VAR_DECLARATION -> "let" IDENTIFIER (":" TYPE)? "=" EXPRESSION
+
+IF_STATEMENT    -> "if" "(" EXPRESSION ")" BLOCK ("elif" "(" EXPRESSION ")" BLOCK)* ("else" BLOCK)?
+WHILE_STATEMENT -> "while" "(" EXPRESSION ")" BLOCK
+FOR_LOOP        -> "for" "(" IDENTIFIER "in" EXPRESSION ")" BLOCK
+RETURN_STATEMENT-> "return" EXPRESSION?
+
+// -- Unified Expression Hierarchy (Precedence: Low to High)
+EXPRESSION      -> ASSIGNMENT
+
+// 1. Assignment (Right-associative)
+ASSIGNMENT      -> LOGIC_OR ( "=" ASSIGNMENT )*
+
+// 2. Logical OR
+LOGIC_OR        -> LOGIC_AND ( "||" LOGIC_AND )*
+
+// 3. Logical AND
+LOGIC_AND       -> COMPARISON ( "&&" COMPARISON )*
+
+// 4. Comparison
+COMPARISON      -> ARITH_EXPR ( COMPARISON_OP ARITH_EXPR )*
+
+// 5. Arithmetic (Addition/Subtraction)
+ARITH_EXPR      -> TERM ( ("+" | "-") TERM )*
+
+// 6. Term (Multiplication/Division)
+TERM            -> FACTOR ( ("*" | "/") FACTOR )*
+
+// 7. Unary (Right-associative)
+FACTOR          -> ("+" | "-" | "!") FACTOR | POSTFIX
+
+// 8. Postfix (Calls, Fields, Indexing)-- FUNCTION_CALL and FIELD_ACCESS like x.a=10
+POSTFIX         -> ATOM ( 
+                     "(" ARGUMENTS ")" | 
+                     "." IDENTIFIER    | 
+                     "[" EXPRESSION "]" 
+                   )*
+
+// 9. Atoms (Base Values)
+ATOM            -> NUMBER 
+                 | IDENTIFIER 
+                 | STRING_LIT 
+                 | CHAR_LIT 
+                 | BOOL_LIT 
+                 | STRUCT_LIT 
+                 | "(" EXPRESSION ")"
+
+// -- Support Rules
 STRUCT_LIT -> IDENTIFIER "{" STRUCT_INIT_FIELDS "}"
 STRUCT_INIT_FIELDS -> STRUCT_INIT_FIELD ("," STRUCT_INIT_FIELD)* ","? | ε
 STRUCT_INIT_FIELD -> IDENTIFIER ":" EXPRESSION
-
-VAR_DECLARATION -> "let" IDENTIFIER ":" TYPE "=" EXPRESSION
-                 | "let" IDENTIFIER "=" EXPRESSION
-
-FUNCTION -> "fn" IDENTIFIER "(" PARAMETERS ")" ":" TYPE BLOCK
-PARAMETERS -> PARAMETER ("," PARAMETER)* | ε
-PARAMETER -> IDENTIFIER ":" TYPE
-
-BLOCK -> "{" STATEMENTS "}"
-STATEMENTS -> (STATEMENT)*
-STATEMENT -> BLOCK_STMT 
-           | SIMPLE_STMT ";"
-BLOCK_STMT -> IF_STATEMENT
-           | WHILE_STATEMENT
-           | FOR_LOOP
-
-SIMPLE_STMT -> ASSIGNMENT 
-           | VAR_DECLARATION
-           | EXPRESSION
-           | RETURN_STATEMENT
-
-LVALUE -> IDENTIFIER ("." IDENTIFIER)*
-ASSIGNMENT -> LVALUE "=" EXPRESSION
-
-IF_STATEMENT -> "if" "(" CONDITION ")" BLOCK ("else if" "(" CONDITION ")" BLOCK)* ("else" BLOCK)?
-WHILE_STATEMENT -> "while" "(" CONDITION ")" BLOCK
-FOR_LOOP -> "for" "(" IDENTIFIER "in" EXPRESSION ")" BLOCK
-RETURN_STATEMENT -> "return" EXPRESSION?
-
-// Arithmetic expressions - no ! operator here
-EXPRESSION -> TERM (("+"|"-") TERM)*
-TERM -> FACTOR (("*"|"/") FACTOR)*
-FACTOR -> UNARY_EXPR
-UNARY_EXPR -> ("+" | "-") UNARY_EXPR | POSTFIX
-POSTFIX -> ATOM ("." IDENTIFIER | "(" ARGUMENTS ")")* 
-// POSTFIX handles FUNCTION_CALL and FIELD_ACCESS like x.a=10
-
-ATOM -> NUMBER
-         | IDENTIFIER
-         | STRING_LIT
-         | CHAR_LIT
-         | BOOL_LIT
-         | STRUCT_LIT
-         | "(" EXPRESSION ")"
-
 ARGUMENTS -> EXPRESSION ("," EXPRESSION)* | ε
-
-// Boolean conditions - ! operator only here
-
-CONDITION -> OR_EXPR
-OR_EXPR -> AND_EXPR ("||" AND_EXPR)*
-AND_EXPR -> NOT_EXPR ("&&" NOT_EXPR)*
-NOT_EXPR -> "!" NOT_EXPR | COMPARISON
-COMPARISON -> EXPRESSION COMPARISON_OP EXPRESSION 
-            | BOOL_PRIMARY
-BOOL_PRIMARY -> BOOL_LIT 
-              | IDENTIFIER
-              | POSTFIX  
-              | "(" CONDITION ")"
 COMPARISON_OP -> "==" | "!=" | "<" | ">" | "<=" | ">="
 
 // Lexical tokens
+KEYWORD -> "fn" | "let" | "if" | "elif" | "else" | "while" | "for"
+         | "return" | "import" | "in" | "true" | "false" | "struct"
 NUMBER -> [0-9]+
 IDENTIFIER -> [a-zA-Z_][a-zA-Z0-9_]*
-STRING_LIT -> '"' [^"]* '"' // double quotes inside quotes, strings except double quotes
-CHAR_LIT -> "'" . "'" // . = wildcard
+STRING_LIT   -> '"' ( [^"\\] | "\\" . )* '"'// double quotes inside quotes, strings except double quotes
+CHAR_LIT     -> "'" ( [^'\\] | "\\" . ) "'"// . = wildcard
 BOOL_LIT -> "true" | "false"
 ALNUM_LIT -> NUMBER | IDENTIFIER | STRING_LIT | CHAR_LIT | BOOL_LIT
-
-COMMENT -> SINGLE_LINE_COMMENT | MULTI_LINE_COMMENT
-SINGLE_LINE_COMMENT -> "//" [^\n]* "\n"
-MULTI_LINE_COMMENT -> "/*" .* "*/"
+COMMENT -> "//" [^\n]* "\n" | "/*" .*? "*/"
