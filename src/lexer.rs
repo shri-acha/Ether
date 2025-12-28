@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -25,8 +27,8 @@ pub enum TokenType {
     Void,
     
     // Literals
-    Number32(i32),
-    FloatLit32(f32),  // Added for floating-point numbers
+    Number(String),
+    FloatLit(String),  // Added for floating-point numbers
     StringLit(String),
     CharLit(char),
     Identifier(String),

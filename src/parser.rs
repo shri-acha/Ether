@@ -476,9 +476,9 @@ impl Parser {
 
     fn parse_primary(&mut self) -> Expr {
         match self.next() {
-            TokenType::Number(n) => Expr::Literal(Literal::Int(n.clone())),
-            TokenType::FloatLit(f) => Expr::Literal(Literal::Float(f.clone())),
-            TokenType::StringLit(s) => Expr::Literal(Literal::String(s.clone())),
+            TokenType::Number(n) => Expr::Literal(Literal::Int(n.to_string())),
+            TokenType::FloatLit(f) => Expr::Literal(Literal::Float(f.to_string())),
+            TokenType::StringLit(s) => Expr::Literal(Literal::String(s.to_string())),
             TokenType::CharLit(c) => Expr::Literal(Literal::Char(*c)),
             TokenType::True => Expr::Literal(Literal::Bool(true)),
             TokenType::False => Expr::Literal(Literal::Bool(false)),
