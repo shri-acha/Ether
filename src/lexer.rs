@@ -25,8 +25,8 @@ pub enum TokenType {
     Void,
     
     // Literals
-    Number(String),
-    FloatLit(String),  // Added for floating-point numbers
+    Number32(i32),
+    FloatLit32(f32),  // Added for floating-point numbers
     StringLit(String),
     CharLit(char),
     Identifier(String),
@@ -506,4 +506,3 @@ impl Tokenizer {
         tokens
     }
 }
-
