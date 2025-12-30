@@ -5,16 +5,14 @@ use thiserror::Error;
 pub type EtherResult<T> = result::Result<T, EtherError>;
 
 #[derive(Debug, Clone, Error)]
-#[error("{err_string} at {}:{}", line, column)]
+#[error("{err_string}")]
 pub struct ParserError {
     err_string: String,
-    pub line: usize,
-    pub column: usize,
 }
 
 impl ParserError {
-    pub fn new(err_string: String, line: usize, column: usize) -> Self {
-        Self { err_string, line, column }
+    pub fn new(err_string: String) -> Self {
+        Self { err_string }
     }
 }
 
