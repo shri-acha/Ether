@@ -2,7 +2,7 @@ use thiserror::Error;
 use std::fmt;
 use std::result;
 
-type EtherResult<T> = result::Result<T,EtherError>;
+pub type EtherResult<T> = result::Result<T,EtherError>;
 
 #[derive(Debug,Clone,Error)]
 #[error("{err_string}")]

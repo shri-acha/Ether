@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use std::fmt;
+use crate::error::{EtherResult,EtherError};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenType {
