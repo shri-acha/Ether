@@ -93,8 +93,8 @@ pub enum Expr {
     Unary(UnOp, Box<Expr>),
     Call(Box<Expr>, Vec<Expr>),
     Field(Box<Expr>, String),
-    Index(Box<Expr>, Box<Expr>),
     Function(Function),
+    Index(Box<Expr>, Box<Expr>),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -210,9 +210,19 @@ impl Parser {
 
     fn parse_declaration(&mut self) -> EtherResult<Declaration> {
         match self.peek()? {
-            TokenType::Fn => Ok(Declaration::Function(self.parse_function()?)),
-            TokenType::Struct => Ok(Declaration::Struct(self.parse_struct()?)),
-            TokenType::Let => Ok(Declaration::Var(self.parse_var_decl()?)),
+            TokenType::Fn => {
+                self.next();
+                let name = self.expect_ident().ok();
+                Ok(Declaration::Function(self.parse_function(name)?))
+            }
+            TokenType::Struct =>{
+                self.next();
+                Ok(Declaration::Struct(self.parse_struct()?))
+            }
+            TokenType::Let =>{
+                self.next();
+                Ok(Declaration::Var(self.parse_var_decl()?))
+            }
             t => Err(EtherError::Parser(ParserError::new(format!(
                 "Invalid declaration start: {:?}",
                 t
@@ -267,7 +277,6 @@ impl Parser {
     // ---------- declarations ----------
 
     fn parse_struct(&mut self) -> EtherResult<StructDef> {
-        self.expect(TokenType::Struct)?;
         let name = self.expect_ident()?;
         self.expect(TokenType::LBrace)?;
 
@@ -290,11 +299,9 @@ impl Parser {
         Ok(StructDef { name, fields })
     }
 
-    fn parse_function(&mut self) -> EtherResult<Function> {
-        self.expect(TokenType::Fn)?;
-        let name = self.expect_ident()?;
-
+    fn parse_function(&mut self,name:Option<String>) -> EtherResult<Function> {
         self.expect(TokenType::LParen)?;
+
         let mut params = Vec::new();
         if self.peek()? != TokenType::RParen {
             loop {
@@ -316,7 +323,7 @@ impl Parser {
 
         Ok(Function {
             header: FunctionHeader {
-                name: Some(name),
+                name,
                 params,
                 return_type: Box::new(return_type),
             },
@@ -340,7 +347,10 @@ impl Parser {
     fn parse_stmt(&mut self) -> EtherResult<Stmt> {
         // { let|return|if|while|block|  }
         match self.peek()? {
-            TokenType::Let => Ok(Stmt::Var(self.parse_var_decl()?)),
+            TokenType::Let =>{
+                self.next()?;
+                Ok(Stmt::Var(self.parse_var_decl()?)) 
+            },
             TokenType::Return => {
                 self.next()?;
                 let expr = if self.peek()? == TokenType::Semicolon {
@@ -364,7 +374,6 @@ impl Parser {
     }
 
     fn parse_var_decl(&mut self) -> EtherResult<VarDecl> {
-        self.expect(TokenType::Let)?;
         let name = self.expect_ident()?;
 
         let ty = if self.peek()? == TokenType::Colon {
@@ -425,7 +434,11 @@ impl Parser {
     // ---------- expressions ----------
 
     fn parse_expr(&mut self) -> EtherResult<Expr> {
-        self.parse_assignment()
+        if self.peek()? == TokenType::LParen {
+            Ok(Expr::Function(self.parse_function(None)?))
+        }else{
+            self.parse_assignment()
+        }
     }
 
     fn parse_assignment(&mut self) -> EtherResult<Expr> {

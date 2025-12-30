@@ -90,7 +90,7 @@ fn ast_gen_test() {
 fn ast_currying_test() {
     let code = r#"
     fn x(a:int):(int):int {
-        return 5;
+        return (a:int):int{return a+b;};
     }
     "#;
     let mut tokenizer = Tokenizer::new(code);
