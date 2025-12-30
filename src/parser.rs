@@ -27,7 +27,7 @@ pub enum Declaration {
 pub enum Type {
     Primitive(String),
     Array(Box<Type>),
-    Function(Vec<Type>, Box<Type>),
+    Function(FunctionHeader),
     Custom(String),
 }
 
@@ -38,10 +38,15 @@ pub struct StructDef {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct Function {
-    pub name: String,
+pub struct FunctionHeader{
+    pub name: Option<String>,
     pub params: Vec<(String, Type)>,
-    pub return_type: Type,
+    pub return_type: Box<Type>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Function {
+    pub header: FunctionHeader,
     pub body: Block,
 }
 
@@ -221,18 +226,23 @@ impl Parser {
                 Ok(Type::Array(Box::new(t)))
             }
             TokenType::LParen => {
-                let mut params = Vec::new();
-                if self.peek()? != TokenType::RParen {
-                    params.push(self.parse_type()?);
-                    while self.peek()? == TokenType::Comma {
-                        self.next()?;
-                        params.push(self.parse_type()?);
+            let mut params = Vec::new();
+            if self.peek()? != TokenType::RParen {
+                loop {
+                    let pname = self.expect_ident()?;
+                    self.expect(TokenType::Colon)?;
+                    let ptype = self.parse_type()?;
+                    params.push((pname, ptype));
+                    if self.peek()? != TokenType::Comma {
+                        break;
+                    }
+                    self.next()?;
                     }
                 }
                 self.expect(TokenType::RParen)?;
                 self.expect(TokenType::Colon)?;
                 let ret = self.parse_type()?;
-                Ok(Type::Function(params, Box::new(ret)))
+                Ok(Type::Function(FunctionHeader{name:None,params,return_type:Box::new(ret)}))
             }
             t => Err(EtherError::Parser(ParserError::new(format!(
                 "Invalid type: {:?}",
@@ -291,10 +301,11 @@ impl Parser {
         let return_type = self.parse_type()?;
         let body = self.parse_block()?;
 
-        Ok(Function { name, params, return_type, body })
+        Ok(Function { header:FunctionHeader{name:Some(name), params, return_type:Box::new(return_type)}, body })
     }
 
     fn parse_block(&mut self) -> EtherResult<Block> {
+        // {  statements }
         self.expect(TokenType::LBrace)?;
         let mut statements = Vec::new();
         while self.peek()? != TokenType::RBrace {
@@ -307,6 +318,7 @@ impl Parser {
     // ---------- statements ----------
 
     fn parse_stmt(&mut self) -> EtherResult<Stmt> {
+        // { let|return|if|while|block|  }
         match self.peek()? {
             TokenType::Let => Ok(Stmt::Var(self.parse_var_decl()?)),
             TokenType::Return => {
