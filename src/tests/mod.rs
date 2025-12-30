@@ -1,5 +1,6 @@
 #[cfg(test)]
 use crate::{error::*, lexer::*, parser::*};
+use std::assert_matches::assert_matches;
 
 #[test]
 fn lexer_token_generation() {
@@ -82,8 +83,7 @@ fn ast_gen_test() {
 
     let mut parser = Parser::new(tokens);
     let ast = parser.parse_program();
-    // work on adding the assert
-    // assert!(ast,Program{..})
+    assert_matches!(ast, Ok(_));
 }
 
 #[test]
@@ -105,6 +105,6 @@ fn ast_currying_test() {
     let ast = parser.parse_program();
     // work on adding the assert
     // assert!(ast,Program{..})
-    println!("{:?}", ast);
-    assert!(matches!(ast, Ok(_)));
+    // println!("{:?}", ast);
+    assert_matches!(ast, Ok(_));
 }

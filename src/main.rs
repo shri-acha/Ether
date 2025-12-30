@@ -1,3 +1,4 @@
+#![feature(assert_matches)]
 mod error;
 mod lexer;
 mod parser;
