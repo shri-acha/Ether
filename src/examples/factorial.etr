@@ -1,0 +1,10 @@
+fn x(a:int):int{
+	if (a<=0){
+		return 1;
+	}
+	return a*x(a-1);
+}
+
+fn main(){
+	x(5);
+}
