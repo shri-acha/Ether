@@ -1,5 +1,8 @@
+use inkwell::context::Context;
+
+use crate::llvm_ir_generator;
 #[cfg(test)]
-use crate::{error::*, lexer::*, parser::*};
+use crate::{error::*, lexer::*, llvm_ir_generator::*, parser::*};
 use std::assert_matches::assert_matches;
 
 #[test]
@@ -125,7 +128,10 @@ fn error_location_reporting() {
             err.column < 10,
             "Error should be near the start for incomplete expression"
         );
-        println!("Test 1 - Error at line {}, column {}: {}", err.line, err.column, err);
+        println!(
+            "Test 1 - Error at line {}, column {}: {}",
+            err.line, err.column, err
+        );
     } else {
         panic!("Test 1: Expected parser error for incomplete expression");
     }
@@ -152,7 +158,10 @@ fn test(): void {
             err.column > 0,
             "Error column should be recorded and positive"
         );
-        println!("Test 2 - Error at line {}, column {}: {}", err.line, err.column, err);
+        println!(
+            "Test 2 - Error at line {}, column {}: {}",
+            err.line, err.column, err
+        );
     } else {
         panic!("Test 2: Expected parser error for incomplete expression in function");
     }
@@ -171,14 +180,23 @@ fn test(): void {
 
     if let Err(EtherError::Parser(err)) = result {
         // Error location should be tracked
-        assert!(
-            err.line >= 1,
-            "Error line should be properly recorded"
-        );
+        assert!(err.line >= 1, "Error line should be properly recorded");
         assert!(
             err.column > 0,
             "Error column should be recorded and positive"
         );
-        println!("Test 3 - Error at line {}, column {}: {}", err.line, err.column, err);
+        println!(
+            "Test 3 - Error at line {}, column {}: {}",
+            err.line, err.column, err
+        );
     }
+}
+
+#[test]
+fn llvm_ir_gen() {
+    let context = Context::create();
+    let compiler = Compiler::new(&context);
+
+    compiler.compile();
+    compiler.print_ir();
 }
