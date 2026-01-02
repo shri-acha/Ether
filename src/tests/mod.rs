@@ -195,43 +195,66 @@ fn test(): void {
 
 #[test]
 fn llvm_ir_gen() {
-    let source = r#"
+    let test_codes: [&str; 3] = [
+        r#"
         fn add(a: int, b: int): int {
             return a + b;
         }
-        
+
         fn main(): int {
             let x: int = 10;
             let y: int = 20;
             let result: int = add(x, y);
             return result;
         }
-    "#;
-    let mut tokenizer = Tokenizer::new(source);
+    "#,
+        r#"
+        fn fibonacci(n: int): int {
+            if (n <= 1) {
+                return n;
+            } else {
+                return fibonacci(n - 1) + fibonacci(n - 2);
+            }
+        }
+
+        fn main(): int {
+            let result: int = fibonacci(10);
+            return result;
+        }
+    "#,
+        r#"
+        fn sum_to_n(n: int): int {
+            let sum: int = 0;
+            let i: int = 0;
+            
+            while (i <= n) {
+                sum = sum + i;
+                i = i + 1;
+            }
+            
+            return sum;
+        }
+        
+        fn main(): int {
+            return sum_to_n(100);
+        }
+    "#,
+    ];
+    let selected_test_index = 0;
+    let mut tokenizer = Tokenizer::new(test_codes[selected_test_index]);
     let tokens = tokenizer.tokenize(true);
     let mut parser = Parser::new(tokens);
-    let program = match parser.parse_program() {
-        Ok(program) => program,
-        Err(e) => {
-            eprintln!("Parser error: {:?}", e);
-            return;
-        }
-    };
-    // let result = parser.parse_program();
+    let parsed_tokens = parser.parse_program().unwrap();
 
     let context = Context::create();
     let mut codegen = CodeGen::new(&context, "my_module");
 
-    match codegen.compile_program(&program) {
+    match codegen.compile_program(&parsed_tokens) {
         Ok(_) => {
-            println!("Compilation successful!");
-            println!("\nGenerated LLVM IR:");
             codegen.print_ir();
         }
         Err(e) => {
             eprintln!("Code generation error: {}", e);
         }
     }
-    // compiler.compile();
-    // compiler.print_ir();
 }
