@@ -1,5 +1,8 @@
+use inkwell::context::Context;
+
+use crate::llvm_ir_generator;
 #[cfg(test)]
-use crate::{error::*, lexer::*, parser::*};
+use crate::{error::*, lexer::*, llvm_ir_generator::*, parser::*};
 use std::assert_matches::assert_matches;
 
 #[test]
@@ -83,6 +86,7 @@ fn ast_gen_test() {
 
     let mut parser = Parser::new(tokens);
     let ast = parser.parse_program();
+    println!("{:?}", ast);
     assert_matches!(ast, Ok(_));
 }
 
@@ -125,7 +129,10 @@ fn error_location_reporting() {
             err.column < 10,
             "Error should be near the start for incomplete expression"
         );
-        println!("Test 1 - Error at line {}, column {}: {}", err.line, err.column, err);
+        println!(
+            "Test 1 - Error at line {}, column {}: {}",
+            err.line, err.column, err
+        );
     } else {
         panic!("Test 1: Expected parser error for incomplete expression");
     }
@@ -152,7 +159,10 @@ fn test(): void {
             err.column > 0,
             "Error column should be recorded and positive"
         );
-        println!("Test 2 - Error at line {}, column {}: {}", err.line, err.column, err);
+        println!(
+            "Test 2 - Error at line {}, column {}: {}",
+            err.line, err.column, err
+        );
     } else {
         panic!("Test 2: Expected parser error for incomplete expression in function");
     }
@@ -171,14 +181,57 @@ fn test(): void {
 
     if let Err(EtherError::Parser(err)) = result {
         // Error location should be tracked
-        assert!(
-            err.line >= 1,
-            "Error line should be properly recorded"
-        );
+        assert!(err.line >= 1, "Error line should be properly recorded");
         assert!(
             err.column > 0,
             "Error column should be recorded and positive"
         );
-        println!("Test 3 - Error at line {}, column {}: {}", err.line, err.column, err);
+        println!(
+            "Test 3 - Error at line {}, column {}: {}",
+            err.line, err.column, err
+        );
     }
+}
+
+#[test]
+fn llvm_ir_gen() {
+    let source = r#"
+        fn add(a: int, b: int): int {
+            return a + b;
+        }
+        
+        fn main(): int {
+            let x: int = 10;
+            let y: int = 20;
+            let result: int = add(x, y);
+            return result;
+        }
+    "#;
+    let mut tokenizer = Tokenizer::new(source);
+    let tokens = tokenizer.tokenize(true);
+    let mut parser = Parser::new(tokens);
+    let program = match parser.parse_program() {
+        Ok(program) => program,
+        Err(e) => {
+            eprintln!("Parser error: {:?}", e);
+            return;
+        }
+    };
+    // let result = parser.parse_program();
+
+    let context = Context::create();
+    let mut codegen = CodeGen::new(&context, "my_module");
+
+    match codegen.compile_program(&program) {
+        Ok(_) => {
+            println!("Compilation successful!");
+            println!("\nGenerated LLVM IR:");
+            codegen.print_ir();
+        }
+        Err(e) => {
+            eprintln!("Code generation error: {}", e);
+        }
+    }
+    // compiler.compile();
+    // compiler.print_ir();
 }
