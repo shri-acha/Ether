@@ -2,6 +2,7 @@ use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
+use inkwell::values::ValueKind;
 use inkwell::values::{
     BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, PointerValue,
 };
@@ -534,62 +535,87 @@ impl<'ctx> CodeGen<'ctx> {
 
         match (lhs, rhs) {
             (BasicValueEnum::IntValue(l), BasicValueEnum::IntValue(r)) => {
-                let result = match op {
-                    BinOp::Add => self.builder.build_int_add(l, r, "add"),
-                    BinOp::Sub => self.builder.build_int_sub(l, r, "sub"),
-                    BinOp::Mul => self.builder.build_int_mul(l, r, "mul"),
-                    BinOp::Div => self.builder.build_int_signed_div(l, r, "div"),
-                    BinOp::Eq => self.builder.build_int_compare(IntPredicate::EQ, l, r, "eq"),
-                    BinOp::Ne => self.builder.build_int_compare(IntPredicate::NE, l, r, "ne"),
-                    BinOp::Lt => self
+                let result: BasicValueEnum = match op {
+                    BinOp::Add => self.builder.build_int_add(l, r, "add").map(|v| v.into()),
+                    BinOp::Sub => self.builder.build_int_sub(l, r, "sub").map(|v| v.into()),
+                    BinOp::Mul => self.builder.build_int_mul(l, r, "mul").map(|v| v.into()),
+                    BinOp::Div => self
                         .builder
-                        .build_int_compare(IntPredicate::SLT, l, r, "lt"),
-                    BinOp::Gt => self
-                        .builder
-                        .build_int_compare(IntPredicate::SGT, l, r, "gt"),
-                    BinOp::Le => self
-                        .builder
-                        .build_int_compare(IntPredicate::SLE, l, r, "le"),
-                    BinOp::Ge => self
-                        .builder
-                        .build_int_compare(IntPredicate::SGE, l, r, "ge"),
-                    BinOp::And => self.builder.build_and(l, r, "and"),
-                    BinOp::Or => self.builder.build_or(l, r, "or"),
-                }
-                .map_err(|e| format!("Failed to build binary op: {:?}", e))?;
+                        .build_int_signed_div(l, r, "div")
+                        .map(|v| v.into()),
 
-                Ok(result.into())
-            }
-            (BasicValueEnum::FloatValue(l), BasicValueEnum::FloatValue(r)) => {
-                let result = match op {
-                    BinOp::Add => self.builder.build_float_add(l, r, "fadd"),
-                    BinOp::Sub => self.builder.build_float_sub(l, r, "fsub"),
-                    BinOp::Mul => self.builder.build_float_mul(l, r, "fmul"),
-                    BinOp::Div => self.builder.build_float_div(l, r, "fdiv"),
                     BinOp::Eq => self
                         .builder
-                        .build_float_compare(FloatPredicate::OEQ, l, r, "feq"),
+                        .build_int_compare(IntPredicate::EQ, l, r, "eq")
+                        .map(|v| v.into()),
                     BinOp::Ne => self
                         .builder
-                        .build_float_compare(FloatPredicate::ONE, l, r, "fne"),
+                        .build_int_compare(IntPredicate::NE, l, r, "ne")
+                        .map(|v| v.into()),
                     BinOp::Lt => self
                         .builder
-                        .build_float_compare(FloatPredicate::OLT, l, r, "flt"),
+                        .build_int_compare(IntPredicate::SLT, l, r, "lt")
+                        .map(|v| v.into()),
                     BinOp::Gt => self
                         .builder
-                        .build_float_compare(FloatPredicate::OGT, l, r, "fgt"),
+                        .build_int_compare(IntPredicate::SGT, l, r, "gt")
+                        .map(|v| v.into()),
                     BinOp::Le => self
                         .builder
-                        .build_float_compare(FloatPredicate::OLE, l, r, "fle"),
+                        .build_int_compare(IntPredicate::SLE, l, r, "le")
+                        .map(|v| v.into()),
                     BinOp::Ge => self
                         .builder
-                        .build_float_compare(FloatPredicate::OGE, l, r, "fge"),
+                        .build_int_compare(IntPredicate::SGE, l, r, "ge")
+                        .map(|v| v.into()),
+
+                    BinOp::And => self.builder.build_and(l, r, "and").map(|v| v.into()),
+                    BinOp::Or => self.builder.build_or(l, r, "or").map(|v| v.into()),
+                }
+                .map_err(|e| format!("Failed to build int op: {:?}", e))?;
+
+                Ok(result)
+            }
+
+            (BasicValueEnum::FloatValue(l), BasicValueEnum::FloatValue(r)) => {
+                let result: BasicValueEnum = match op {
+                    BinOp::Add => self.builder.build_float_add(l, r, "fadd").map(|v| v.into()),
+                    BinOp::Sub => self.builder.build_float_sub(l, r, "fsub").map(|v| v.into()),
+                    BinOp::Mul => self.builder.build_float_mul(l, r, "fmul").map(|v| v.into()),
+                    BinOp::Div => self.builder.build_float_div(l, r, "fdiv").map(|v| v.into()),
+
+                    BinOp::Eq => self
+                        .builder
+                        .build_float_compare(FloatPredicate::OEQ, l, r, "feq")
+                        .map(|v| v.into()),
+                    BinOp::Ne => self
+                        .builder
+                        .build_float_compare(FloatPredicate::ONE, l, r, "fne")
+                        .map(|v| v.into()),
+                    BinOp::Lt => self
+                        .builder
+                        .build_float_compare(FloatPredicate::OLT, l, r, "flt")
+                        .map(|v| v.into()),
+                    BinOp::Gt => self
+                        .builder
+                        .build_float_compare(FloatPredicate::OGT, l, r, "fgt")
+                        .map(|v| v.into()),
+                    BinOp::Le => self
+                        .builder
+                        .build_float_compare(FloatPredicate::OLE, l, r, "fle")
+                        .map(|v| v.into()),
+                    BinOp::Ge => self
+                        .builder
+                        .build_float_compare(FloatPredicate::OGE, l, r, "fge")
+                        .map(|v| v.into()),
+
                     _ => return Err(format!("Invalid float operation: {:?}", op)),
                 }
                 .map_err(|e| format!("Failed to build float op: {:?}", e))?;
 
-                Ok(result.into())
+                Ok(result)
             }
+
             _ => Err("Type mismatch in binary operation".to_string()),
         }
     }
@@ -634,33 +660,70 @@ impl<'ctx> CodeGen<'ctx> {
         func_expr: &Expr,
         args: &[Expr],
     ) -> Result<BasicValueEnum<'ctx>, String> {
+        // Extract function name
         let func_name = if let Expr::Identifier(name) = func_expr {
             name
         } else {
             return Err("Only direct function calls supported".to_string());
         };
 
-        let function = self
+        // Copy out the FunctionValue to avoid immutable borrow lingering
+        let function = *self
             .functions
             .get(func_name)
             .ok_or_else(|| format!("Undefined function: {}", func_name))?;
 
+        // Compile all arguments
         let mut compiled_args = Vec::new();
         for arg in args {
-            let val = self.compile_expr(arg)?;
-            compiled_args.push(val.into());
+            let val = self.compile_expr(arg)?; // mutable borrow of self is fine now
+            compiled_args.push(val.into()); // convert to BasicMetadataValueEnum
         }
 
+        // Build the call
         let call_site = self
             .builder
-            .build_call(*function, &compiled_args, "call")
+            .build_call(function, &compiled_args, "call")
             .map_err(|e| format!("Failed to build call: {:?}", e))?;
 
-        call_site
-            .try_as_basic_value()
-            .left()
-            .ok_or_else(|| "Function returned void".to_string())
+        // Match old ValueKind enum
+        match call_site.try_as_basic_value() {
+            ValueKind::Basic(value) => Ok(value),
+            ValueKind::Instruction(_) => Err("Function returned void".to_string()),
+        }
     }
+    // fn compile_call(
+    //     &mut self,
+    //     func_expr: &Expr,
+    //     args: &[Expr],
+    // ) -> Result<BasicValueEnum<'ctx>, String> {
+    //     let func_name = if let Expr::Identifier(name) = func_expr {
+    //         name
+    //     } else {
+    //         return Err("Only direct function calls supported".to_string());
+    //     };
+    //
+    //     let function = self
+    //         .functions
+    //         .get(func_name)
+    //         .ok_or_else(|| format!("Undefined function: {}", func_name))?;
+    //
+    //     let mut compiled_args = Vec::new();
+    //     for arg in args {
+    //         let val = self.compile_expr(arg)?;
+    //         compiled_args.push(val.into());
+    //     }
+    //
+    //     let call_site = self
+    //         .builder
+    //         .build_call(*function, &compiled_args, "call")
+    //         .map_err(|e| format!("Failed to build call: {:?}", e))?;
+    //
+    //     match call_site.try_as_basic_value() {
+    //         ValueKind::Basic(value) => Ok(value),
+    //         ValueKind::Instruction(_) => Err("Function returned void".to_string()),
+    //     }
+    // }
 
     fn compile_field(&mut self, _obj: &Expr, _field: &str) -> Result<BasicValueEnum<'ctx>, String> {
         Err("Struct field access not yet implemented".to_string())
