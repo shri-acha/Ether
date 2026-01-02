@@ -244,6 +244,117 @@ impl<'ctx> CodeGen<'ctx> {
             _ => panic!("Unsupported type for default value"),
         }
     }
+
+    // Block & Statements
+    fn compile_block(&mut self, block: &Block) -> Result<(), String> {
+        for stmt in &block.statements {
+            self.compile_stmt(stmt)?;
+
+            // Stop if block is terminated
+            if self
+                .builder
+                .get_insert_block()
+                .unwrap()
+                .get_terminator()
+                .is_some()
+            {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
+        match stmt {
+            Stmt::Var(var) => self.compile_var_decl(var),
+            Stmt::Return(expr) => self.compile_return(expr),
+            Stmt::Expr(expr) => {
+                self.compile_expr(expr)?;
+                Ok(())
+            }
+            Stmt::Block(block) => self.compile_block(block),
+            Stmt::If {
+                cond,
+                then_block,
+                else_block,
+            } => self.compile_if(cond, then_block, else_block.as_ref()),
+            Stmt::While { cond, body } => self.compile_while(cond, body),
+            Stmt::For { name, iter, body } => self.compile_for(name, iter, body),
+        }
+    }
+    fn compile_var_decl(&mut self, var: &VarDecl) -> Result<(), String> {
+        let value = self.compile_expr(&var.value)?;
+
+        let ty = if let Some(ref var_ty) = var.ty {
+            self.convert_type(var_ty)?
+        } else {
+            value.get_type()
+        };
+
+        let alloca = self
+            .builder
+            .build_alloca(ty, &var.name)
+            .map_err(|e| format!("Failed to allocate variable: {:?}", e))?;
+
+        self.builder
+            .build_store(alloca, value)
+            .map_err(|e| format!("Failed to store variable: {:?}", e))?;
+
+        self.variables.insert(var.name.clone(), alloca);
+        Ok(())
+    }
+
+    fn compile_return(&mut self, expr: &Option<Expr>) -> Result<(), String> {
+        if let Some(e) = expr {
+            let value = self.compile_expr(e)?;
+            self.builder
+                .build_return(Some(&value))
+                .map_err(|e| format!("Failed to build return: {:?}", e))?;
+        } else {
+            self.builder
+                .build_return(None)
+                .map_err(|e| format!("Failed to build return: {:?}", e))?;
+        }
+        Ok(())
+    }
+
+    // experssions
+    fn compile_expr(&mut self, expr: &Expr) -> Result<BasicValueEnum<'ctx>, String> {
+        match expr {
+            Expr::Literal(lit) => self.compile_literal(lit),
+            Expr::Identifier(name) => self.compile_identifier(name),
+            Expr::Assign(target, value) => self.compile_assign(target, value),
+            Expr::Binary(left, op, right) => self.compile_binary(left, op, right),
+            Expr::Unary(op, expr) => self.compile_unary(op, expr),
+            Expr::Call(func, args) => self.compile_call(func, args),
+            Expr::Field(obj, field) => self.compile_field(obj, field),
+            Expr::Index(arr, idx) => self.compile_index(arr, idx),
+            Expr::Function(_) => Err("Anonymous functions not yet supported".to_string()),
+        }
+    }
+
+    // literals
+    fn compile_literal(&self, lit: &Literal) -> Result<BasicValueEnum<'ctx>, String> {
+        match lit {
+            Literal::Int(s) => {
+                let val: i64 = s.parse().map_err(|e| format!("Invalid integer: {}", e))?;
+                Ok(self.context.i64_type().const_int(val as u64, true).into())
+            }
+            Literal::Float(s) => {
+                let val: f64 = s.parse().map_err(|e| format!("Invalid float: {}", e))?;
+                Ok(self.context.f64_type().const_float(val).into())
+            }
+            Literal::Bool(b) => Ok(self.context.bool_type().const_int(*b as u64, false).into()),
+            Literal::Char(c) => Ok(self.context.i8_type().const_int(*c as u64, false).into()),
+            Literal::String(s) => {
+                let str_val = self
+                    .builder
+                    .build_global_string_ptr(s, "str")
+                    .map_err(|e| format!("Failed to build string: {:?}", e))?;
+                Ok(str_val.as_pointer_value().into())
+            }
+        }
+    }
     // pub fn compile_expr(&self, expr: &Expr) -> IntValue<'ctx> {
     //     match expr {
     //         Expr::Number(n) => self.context.i64_type().const_int(*n as u64, false),
