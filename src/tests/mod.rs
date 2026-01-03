@@ -90,7 +90,9 @@ fn ast_gen_test() {
 fn ast_currying_test() {
     let code = r#"
     fn x(a:int):(int):int {
-        return (b:int):int{return a+b;};
+        return (b:int):int{
+            return a+b;
+        };
     }
     "#;
     let mut tokenizer = Tokenizer::new(code);
@@ -103,10 +105,73 @@ fn ast_currying_test() {
 
     let mut parser = Parser::new(tokens);
     let ast = parser.parse_program();
-    // work on adding the assert
-    // assert!(ast,Program{..})
-    // println!("{:?}", ast);
     assert_matches!(ast, Ok(_));
+}
+
+#[test]
+fn assigned_lambda_function(){
+
+    let code = r#"
+    let y = (x:int):int{ return x; };
+    "#;
+    let mut tokenizer = Tokenizer::new(code);
+    let tokens = tokenizer.tokenize(true);
+
+    assert!(
+        matches!(tokens.last().unwrap().token_type, TokenType::Eof),
+        "Lexer must emit EOF token"
+    );
+
+    let mut parser = Parser::new(tokens);
+    let ast = parser.parse_program();
+    println!("{:?}",ast);
+    assert_matches!(ast, Ok(_));
+
+}
+
+#[test]
+fn non_variable_binded_function_call(){
+
+    let code = r#"
+    let y = (x:int):int{ return x; };
+    y(5);
+    "#;
+    let mut tokenizer = Tokenizer::new(code);
+    let tokens = tokenizer.tokenize(true);
+
+    assert!(
+        matches!(tokens.last().unwrap().token_type, TokenType::Eof),
+        "Lexer must emit EOF token"
+    );
+
+    let mut parser = Parser::new(tokens);
+    let ast = parser.parse_program();
+    println!("{:?}",ast);
+    assert_matches!(ast, Ok(_));
+
+}
+
+#[test]
+fn enum_design(){
+    let code = r#"
+    enum random{
+        a:int,
+        b:char
+    }
+    "#;
+    let mut tokenizer = Tokenizer::new(code);
+    let tokens = tokenizer.tokenize(true);
+
+    assert!(
+        matches!(tokens.last().unwrap().token_type, TokenType::Eof),
+        "Lexer must emit EOF token"
+    );
+
+    let mut parser = Parser::new(tokens);
+    let ast = parser.parse_program();
+    println!("{:?}",ast);
+    assert_matches!(ast, Ok(_));
+
 }
 
 #[test]
@@ -125,7 +190,10 @@ fn error_location_reporting() {
             err.column < 10,
             "Error should be near the start for incomplete expression"
         );
-        println!("Test 1 - Error at line {}, column {}: {}", err.line, err.column, err);
+        println!(
+            "Test 1 - Error at line {}, column {}: {}",
+            err.line, err.column, err
+        );
     } else {
         panic!("Test 1: Expected parser error for incomplete expression");
     }
@@ -152,7 +220,10 @@ fn test(): void {
             err.column > 0,
             "Error column should be recorded and positive"
         );
-        println!("Test 2 - Error at line {}, column {}: {}", err.line, err.column, err);
+        println!(
+            "Test 2 - Error at line {}, column {}: {}",
+            err.line, err.column, err
+        );
     } else {
         panic!("Test 2: Expected parser error for incomplete expression in function");
     }
@@ -171,14 +242,14 @@ fn test(): void {
 
     if let Err(EtherError::Parser(err)) = result {
         // Error location should be tracked
-        assert!(
-            err.line >= 1,
-            "Error line should be properly recorded"
-        );
+        assert!(err.line >= 1, "Error line should be properly recorded");
         assert!(
             err.column > 0,
             "Error column should be recorded and positive"
         );
-        println!("Test 3 - Error at line {}, column {}: {}", err.line, err.column, err);
+        println!(
+            "Test 3 - Error at line {}, column {}: {}",
+            err.line, err.column, err
+        );
     }
 }

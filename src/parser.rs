@@ -20,6 +20,7 @@ pub struct Import {
 pub enum Declaration {
     Function(Function),
     Struct(StructDef),
+    Enum(EnumDef),
     Var(VarDecl),
 }
 
@@ -35,6 +36,12 @@ pub enum Type {
 pub struct StructDef {
     pub name: String,
     pub fields: Vec<(String, Type)>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct EnumDef {
+    pub name: String,
+    pub fields: Vec<(String, Option<Type>)>, // Optional types for fields 
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -166,7 +173,11 @@ impl Parser {
                 } else {
                     (1, 1)
                 };
-                EtherError::Parser(ParserError::new("Unexpected end of input".into(), line, column))
+                EtherError::Parser(ParserError::new(
+                    "Unexpected end of input".into(),
+                    line,
+                    column,
+                ))
             })
     }
 
@@ -182,10 +193,11 @@ impl Parser {
             Ok(())
         } else {
             let (line, column) = self.get_position();
-            Err(EtherError::Parser(ParserError::new(format!(
-                "Expected {:?}, got {:?}",
-                expected, tok
-            ), line, column)))
+            Err(EtherError::Parser(ParserError::new(
+                format!("Expected {:?}, got {:?}", expected, tok),
+                line,
+                column,
+            )))
         }
     }
 
@@ -194,10 +206,11 @@ impl Parser {
             TokenType::Identifier(s) => Ok(s.clone()),
             t => {
                 let (line, column) = self.get_position();
-                Err(EtherError::Parser(ParserError::new(format!(
-                    "Expected identifier, got {:?}",
-                    t
-                ), line, column)))
+                Err(EtherError::Parser(ParserError::new(
+                    format!("Expected identifier, got {:?}", t),
+                    line,
+                    column,
+                )))
             }
         }
     }
@@ -228,10 +241,11 @@ impl Parser {
             TokenType::StringLit(s) => Ok(Import { module: s.clone() }),
             t => {
                 let (line, column) = self.get_position();
-                Err(EtherError::Parser(ParserError::new(format!(
-                    "Expected string literal, got {:?}",
-                    t
-                ), line, column)))
+                Err(EtherError::Parser(ParserError::new(
+                    format!("Expected string literal, got {:?}", t),
+                    line,
+                    column,
+                )))
             }
         }
     }
@@ -243,20 +257,25 @@ impl Parser {
                 let name = self.expect_ident().ok();
                 Ok(Declaration::Function(self.parse_function(name)?))
             }
-            TokenType::Struct =>{
+            TokenType::Struct => {
                 self.next();
                 Ok(Declaration::Struct(self.parse_struct()?))
             }
-            TokenType::Let =>{
+            TokenType::Enum => {
+                self.next();
+                Ok(Declaration::Enum(self.parse_enum()?))
+            }
+            TokenType::Let => {
                 self.next();
                 Ok(Declaration::Var(self.parse_var_decl()?))
             }
             t => {
                 let (line, column) = self.get_position();
-                Err(EtherError::Parser(ParserError::new(format!(
-                    "Invalid declaration start: {:?}",
-                    t
-                ), line, column)))
+                Err(EtherError::Parser(ParserError::new(
+                    format!("Invalid declaration start: {:?}", t),
+                    line,
+                    column,
+                )))
             }
         }
     }
@@ -282,7 +301,7 @@ impl Parser {
                 if self.peek()? != TokenType::RParen {
                     loop {
                         let ptype = self.parse_type()?;
-                        params.push((None,ptype));
+                        params.push((None, ptype));
                         if self.peek()? != TokenType::Comma {
                             break;
                         }
@@ -294,16 +313,17 @@ impl Parser {
                 let ret = self.parse_type()?;
                 Ok(Type::Function(FunctionHeader {
                     name: None,
-                    params:params,
+                    params: params,
                     return_type: Box::new(ret),
                 }))
             }
             t => {
                 let (line, column) = self.get_position();
-                Err(EtherError::Parser(ParserError::new(format!(
-                    "Invalid type: {:?}",
-                    t
-                ), line, column)))
+                Err(EtherError::Parser(ParserError::new(
+                    format!("Invalid type: {:?}", t),
+                    line,
+                    column,
+                )))
             }
         }
     }
@@ -333,7 +353,35 @@ impl Parser {
         Ok(StructDef { name, fields })
     }
 
-    fn parse_function(&mut self,name:Option<String>) -> EtherResult<Function> {
+    fn parse_enum(&mut self)->EtherResult<EnumDef> {
+
+        let name = self.expect_ident()?;
+        self.expect(TokenType::LBrace)?;
+
+        let mut fields = Vec::new();
+        if self.peek()? != TokenType::RBrace {
+            loop {
+                let fname = self.expect_ident()?;
+                if self.peek()? == TokenType::Colon{
+                    self.next();
+                    let ftype = self.parse_type().ok();
+                    fields.push((fname, ftype));
+                } else{
+                    fields.push((fname, None));
+                }
+
+                if self.peek()? != TokenType::Comma {
+                    break;
+                }
+                self.next()?;
+            }
+        }
+
+        self.expect(TokenType::RBrace)?;
+        Ok(EnumDef { name, fields })
+    }
+
+    fn parse_function(&mut self, name: Option<String>) -> EtherResult<Function> {
         self.expect(TokenType::LParen)?;
 
         let mut params = Vec::new();
@@ -381,10 +429,10 @@ impl Parser {
     fn parse_stmt(&mut self) -> EtherResult<Stmt> {
         // { let|return|if|while|block|  }
         match self.peek()? {
-            TokenType::Let =>{
+            TokenType::Let => {
                 self.next()?;
-                Ok(Stmt::Var(self.parse_var_decl()?)) 
-            },
+                Ok(Stmt::Var(self.parse_var_decl()?))
+            }
             TokenType::Return => {
                 self.next()?;
                 let expr = if self.peek()? == TokenType::Semicolon {
@@ -470,7 +518,7 @@ impl Parser {
     fn parse_expr(&mut self) -> EtherResult<Expr> {
         if self.peek()? == TokenType::LParen {
             Ok(Expr::Function(self.parse_function(None)?))
-        }else{
+        } else {
             self.parse_assignment()
         }
     }
@@ -616,10 +664,11 @@ impl Parser {
             }
             t => {
                 let (line, column) = self.get_position();
-                Err(EtherError::Parser(ParserError::new(format!(
-                    "Invalid expression start: {:?}",
-                    t
-                ), line, column)))
+                Err(EtherError::Parser(ParserError::new(
+                    format!("Invalid expression start: {:?}", t),
+                    line,
+                    column,
+                )))
             }
         }
     }
