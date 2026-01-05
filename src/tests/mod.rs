@@ -3,7 +3,7 @@ use inkwell::context::Context;
 use crate::llvm_ir_generator;
 #[cfg(test)]
 use crate::{error::*, lexer::*, llvm_ir_generator::*, parser::*,
-    type_checker::*};
+    type_checker::*, semantic_analyzer::*};
 use std::assert_matches::assert_matches;
 
 #[test]
@@ -583,5 +583,61 @@ mod type_tests {
         // Verify the block correctly validates against an expected Float return
         let result = run_checker(source, &InferredType::Float);
         assert!(result.is_ok());
+    }
+}
+
+#[cfg(test)]
+mod semantic_analyzer_tests {
+    use super::*;
+    use crate::lexer::Tokenizer;
+    use crate::parser::Parser;
+
+    // Helper: full pipeline from string to semantic result
+    fn analyze(source: &str) -> Result<(), EtherError> {
+        let mut tokenizer = Tokenizer::new(source);
+        let tokens = tokenizer.tokenize(true);
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse_program()?; // Ensure parse_program is pub
+        
+        type_check_program(&program)
+    }
+
+    #[test]
+    fn test_valid_program_semantics() {
+        let code = r#"
+            fn add(a: int, b: int): int {
+                return a + b;
+            }
+
+            fn main(): void {
+                let x: int = add(5, 10);
+            }
+        "#;
+        assert!(analyze(code).is_ok());
+    }
+
+    #[test]
+    fn test_invalid_return_type_semantics() {
+        let code = r#"
+            fn get_float(): int {
+                return 3.14; // Should fail: returns float instead of int
+            }
+        "#;
+        let result = analyze(code);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_function_call_mismatch() {
+        let code = r#"
+            fn square(n: int): int {
+                return n * n;
+            }
+
+            fn main(): void {
+                let res: int = square(true); // Should fail: bool passed to int param
+            }
+        "#;
+        assert!(analyze(code).is_err());
     }
 }
