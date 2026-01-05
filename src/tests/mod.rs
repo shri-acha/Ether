@@ -2,7 +2,8 @@ use inkwell::context::Context;
 
 use crate::llvm_ir_generator;
 #[cfg(test)]
-use crate::{error::*, lexer::*, llvm_ir_generator::*, parser::*};
+use crate::{error::*, lexer::*, llvm_ir_generator::*, parser::*,
+    type_checker::*};
 use std::assert_matches::assert_matches;
 
 #[test]
@@ -321,5 +322,266 @@ fn llvm_ir_gen() {
         Err(e) => {
             eprintln!("Code generation error: {}", e);
         }
+    }
+}
+
+#[cfg(test)]
+mod type_tests {
+    use super::*;
+
+    // --- Helpers ---
+    fn parse_stmt(input: &str) -> crate::parser::Stmt {
+        let mut tokenizer = Tokenizer::new(input);
+        let tokens = tokenizer.tokenize(true);
+        let mut parser = Parser::new(tokens);
+        parser.parse_stmt().expect("Stmt parse failure")
+    }
+
+    fn parse_expr(input: &str) -> crate::parser::Expr {
+        let mut tokenizer = Tokenizer::new(input);
+        let tokens = tokenizer.tokenize(true);
+        let mut parser = Parser::new(tokens);
+        parser.parse_expr().expect("Expr parse failure")
+    }
+
+    // --- Unit Tests ---
+    // --- Expression Inference ---
+    #[test]
+    fn test_infer_literals() {
+        let mut checker = TypeChecker::new();
+        let subst = Substitution::new();
+
+        assert_eq!(checker.infer_expr(&parse_expr("42"), &subst).unwrap().0, InferredType::Int);
+        assert_eq!(checker.infer_expr(&parse_expr("3.14"), &subst).unwrap().0, InferredType::Float);
+        assert_eq!(checker.infer_expr(&parse_expr("true"), &subst).unwrap().0, InferredType::Bool);
+        assert_eq!(checker.infer_expr(&parse_expr("\"ether\""), &subst).unwrap().0, InferredType::String);
+    }
+
+    #[test]
+    fn test_infer_binary_op() {
+        let mut checker = TypeChecker::new();
+        let subst = Substitution::new();
+
+        // Valid: int + int
+        let (ty, _) = checker.infer_expr(&parse_expr("10 + 20"), &subst).unwrap();
+        assert_eq!(ty, InferredType::Int);
+
+        // Invalid: int + float
+        assert!(checker.infer_expr(&parse_expr("10 + 3.14"), &subst).is_err());
+    }
+
+    // --- Unification ---
+    #[test]
+    fn test_unification_logic() {
+        // Concrete types
+        assert!(unify(&InferredType::Int, &InferredType::Int).is_ok());
+        assert!(unify(&InferredType::Int, &InferredType::Float).is_err());
+
+        // Type variables
+        let mut gene = TypeVarGenerator::new();
+        let tv = gene.fresh();
+        let res = unify(&InferredType::Var(tv), &InferredType::Bool).unwrap();
+        assert_eq!(res.get(&tv).unwrap(), &InferredType::Bool);
+    }
+
+    // --- Statements & Scoping ---
+    #[test]
+    fn test_variable_declaration_and_lookup() {
+        let mut checker = TypeChecker::new();
+        let subst = Substitution::new();
+
+        // let x = 5;
+        let stmt = parse_stmt("let x = 5;");
+        checker.check_stmt(&stmt, &subst, &InferredType::Void).unwrap();
+
+        // Verify x is in environment
+        let expr = parse_expr("x");
+        let (ty, _) = checker.infer_expr(&expr, &subst).unwrap();
+        assert_eq!(ty, InferredType::Int);
+    }
+
+    #[test]
+    fn test_block_scope_isolation() {
+        let mut checker = TypeChecker::new();
+        let subst = Substitution::new();
+
+        let code = r#"{
+            let inner = 10;
+        }"#;
+        
+        let mut tokenizer = Tokenizer::new(code);
+        let tokens = tokenizer.tokenize(true);
+        let mut parser = Parser::new(tokens);
+        let block = parser.parse_block().unwrap();
+
+        checker.check_block(&block, &subst, &InferredType::Void).unwrap();
+        
+        // 'inner' should not exist outside the block
+        assert!(checker.env.lookup("inner").is_none());
+    }
+
+    // --- Functions ---
+    #[test]
+    fn test_function_return_validation() {
+        let mut checker = TypeChecker::new();
+        let subst = Substitution::new();
+
+        // Valid return
+        let block_ok = r#"{ return 10; }"#;
+        let mut parser_ok = Parser::new(Tokenizer::new(block_ok).tokenize(true));
+        assert!(checker.check_block(&parser_ok.parse_block().unwrap(), &subst, &InferredType::Int).is_ok());
+
+        // Invalid return type
+        let block_err = r#"{ return 3.14; }"#;
+        let mut parser_err = Parser::new(Tokenizer::new(block_err).tokenize(true));
+        assert!(checker.check_block(&parser_err.parse_block().unwrap(), &subst, &InferredType::Int).is_err());
+    }
+
+    #[test]
+    fn test_function_call_arity_and_types() {
+        let mut checker = TypeChecker::new();
+        let subst = Substitution::new();
+
+        // Define fn(int, int): bool
+        let func_ty = InferredType::Function(
+            vec![InferredType::Int, InferredType::Int],
+            Box::new(InferredType::Bool)
+        );
+        checker.env.insert("compare".to_string(), func_ty);
+
+        // Valid call
+        assert!(checker.infer_expr(&parse_expr("compare(1, 2)"), &subst).is_ok());
+
+        // Wrong arity
+        assert!(checker.infer_expr(&parse_expr("compare(1)"), &subst).is_err());
+
+        // Wrong types
+        assert!(checker.infer_expr(&parse_expr("compare(1, true)"), &subst).is_err());
+    }
+
+    #[test]
+    fn test_inference_from_source() {
+        let mut checker = TypeChecker::new();
+        let subst = Substitution::new();
+        
+        let expr = parse_expr("10 + 20");
+        let (ty, _) = checker.infer_expr(&expr, &subst).unwrap();
+        assert_eq!(ty, InferredType::Int);
+    }
+
+    #[test]
+    fn test_assignment_logic() {
+        let mut checker = TypeChecker::new();
+        let subst = Substitution::new();
+
+        // let x = 5;
+        let stmt = parse_stmt("let x = 5;");
+        checker.check_stmt(&stmt, &subst, &InferredType::Void).unwrap();
+        
+        // y = x + 1;
+        checker.env.insert("x".to_string(), InferredType::Int);
+        let expr = parse_expr("x + 1");
+        let (ty, _) = checker.infer_expr(&expr, &subst).unwrap();
+        assert_eq!(ty, InferredType::Int);
+    }
+
+    #[test]
+    fn test_block_scope_resolution() {
+        let mut checker = TypeChecker::new();
+        let subst = Substitution::new();
+        
+        let code = r#"{
+            let a = 1.5;
+            return a;
+        }"#;
+        
+        let mut tokenizer = Tokenizer::new(code);
+        let tokens = tokenizer.tokenize(true);
+        let mut parser = Parser::new(tokens);
+        let block = parser.parse_block().unwrap();
+
+        assert!(checker.check_block(&block, &subst, &InferredType::Float).is_ok());
+    }
+
+    // --- Integration Tests ---
+    // Helper: Converts source code into a fully checked environment state
+    fn run_checker(source: &str, expected_ret: &InferredType) -> Result<TypeChecker, String> {
+        let mut tokenizer = Tokenizer::new(source);
+        let tokens = tokenizer.tokenize(true);
+        let mut parser = Parser::new(tokens);
+        
+        let mut checker = TypeChecker::new();
+        let subst = Substitution::new();
+
+        // Check if input is a block or a single statement
+        if source.trim().starts_with('{') {
+            let block = parser.parse_block().map_err(|e| e.to_string())?;
+            checker.check_block(&block, &subst, expected_ret).map_err(|e| e.to_string())?;
+        } else {
+            let stmt = parser.parse_stmt().map_err(|e| e.to_string())?;
+            checker.check_stmt(&stmt, &subst, expected_ret).map_err(|e| e.to_string())?;
+        }
+        
+        Ok(checker)
+    }
+
+    #[test]
+    fn test_variable_shadowing_integration() {
+        let source = r#"{
+            let x = 10;
+            {
+                let x = true;
+            }
+            let y = x + 5;
+        }"#;
+
+        let result = run_checker(source, &InferredType::Void);
+        assert!(result.is_ok(), "Shadowing should resolve without conflict");
+    }
+
+    #[test]
+    fn test_arithmetic_inference_integration() {
+        let source = r#"{
+            let a = 5;
+            let b = 10;
+            let c = (a + b) * 2;
+        }"#;
+
+        let checker = run_checker(source, &InferredType::Void).unwrap();
+        assert_eq!(checker.env.lookup("c"), Some(&InferredType::Int));
+    }
+
+    #[test]
+    fn test_type_mismatch_integration() {
+        let source = r#"{
+            let x = 10;
+            let y = "string";
+            let z = x + y;
+        }"#;
+
+        let result = run_checker(source, &InferredType::Void);
+        assert!(result.is_err(), "Binary operation on mismatched types must fail");
+    }
+
+    #[test]
+    fn test_recursive_definition_prevention() {
+        // Testing 'let x = x + 1' where x is not yet defined
+        let source = r#"let x = x + 1;"#;
+        
+        let result = run_checker(source, &InferredType::Void);
+        assert!(result.is_err(), "Should fail due to undefined identifier 'x' in its own definition");
+    }
+
+    #[test]
+    fn test_complex_block_return_integration() {
+        let source = r#"{
+            let radius = 5.0;
+            let pi = 3.14;
+            return pi * (radius * radius);
+        }"#;
+
+        // Verify the block correctly validates against an expected Float return
+        let result = run_checker(source, &InferredType::Float);
+        assert!(result.is_ok());
     }
 }
