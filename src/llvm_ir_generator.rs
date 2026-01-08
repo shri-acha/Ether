@@ -132,6 +132,15 @@ fn declare_struct(&mut self, struct_def: &StructDef) -> Result<(), String> {
     Ok(())
 }
     // ================= Enum Handling =================
+    //
+    // This has a bit of complications while trying to implement
+    // llvm doesn't have native support for enums/tagged unions
+    // so, we'll have to implement { discriminant , payload }
+    // so that the discrimant is encoded with number of variants
+    // and the payload is able to handle the size of the maximum variant
+    // and also the alignment of the value as aparently llvm doesn't support
+    // alignments. As cpu while fetching from memory has to align with types.
+    //
     // fn declare_enum(&mut self, enum_def: &EnumDef) -> Result<(), String> {
 
     //     self.enums.insert(enum_def.name.clone());

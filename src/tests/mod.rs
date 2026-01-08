@@ -160,8 +160,9 @@ fn non_variable_binded_function_call(){
 fn enum_design(){
     let code = r#"
     enum random{
-        a:int,
-        b:char
+        a,
+        b,
+        c:char
     }
     "#;
     let mut tokenizer = Tokenizer::new(code);
