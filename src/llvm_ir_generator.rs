@@ -69,6 +69,7 @@ impl<'ctx> CodeGen<'ctx> {
                 Declaration::Function(f) => self.compile_function(f)?,
                 Declaration::Var(v) => self.compile_global_var(v)?,
                 Declaration::Struct(_) => {} // Already handled
+
                 Declaration::Enum(_)=>todo!(),
             }
         }
