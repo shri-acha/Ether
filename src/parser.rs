@@ -41,35 +41,35 @@ pub struct StructDef {
 #[derive(Debug, PartialEq, Eq)]
 pub struct EnumDef {
     pub name: String,
-    pub fields: Vec<(String, Option<Type>)>, // Optional types for fields 
+    pub fields: Vec<(String, Option<Type>)>, 
 }
 
-#[derive(Debug, PartialEq, Eq,Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct FunctionHeader {
     pub name: Option<String>,
     pub params: Vec<(Option<String>, Type)>,
     pub return_type: Box<Type>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Function {
     pub header: FunctionHeader,
     pub body: Block,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct VarDecl {
     pub name: String,
     pub ty: Option<Type>,
     pub value: Expr,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Block {
     pub statements: Vec<Stmt>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Stmt {
     Var(VarDecl),
     Return(Option<Expr>),
@@ -91,7 +91,7 @@ pub enum Stmt {
     },
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Expr {
     Literal(Literal),
     Identifier(String),
@@ -104,7 +104,7 @@ pub enum Expr {
     Index(Box<Expr>, Box<Expr>),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Literal {
     Int(String),
     Float(String),
@@ -113,7 +113,7 @@ pub enum Literal {
     Char(char),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum BinOp {
     Add,
     Sub,
@@ -129,7 +129,7 @@ pub enum BinOp {
     Or,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum UnOp {
     Neg,
     Not,
@@ -213,6 +213,37 @@ impl Parser {
                 }.into())
             }
         }
+    }
+
+    /// Lookahead to determine if the current position starts a function definition.
+    /// A function definition looks like: ( params ) : ReturnType { ... }
+    /// We check if the token following the matching ')' is a Colon.
+    fn is_function_definition(&self) -> bool {
+        let mut pos = self.pos;
+        // Must start with '('
+        if self.tokens.get(pos).map(|t| t.token_type.clone()) != Some(TokenType::LParen) {
+            return false;
+        }
+        pos += 1;
+        let mut depth = 1;
+        
+        // Scan forward to find matching ')'
+        while depth > 0 && pos < self.tokens.len() {
+            match self.tokens[pos].token_type {
+                TokenType::LParen => depth += 1,
+                TokenType::RParen => depth -= 1,
+                _ => {}
+            }
+            pos += 1;
+        }
+        
+        // If we found the closing paren, check if the next token is ':'
+        if depth == 0 {
+            if let Some(tok) = self.tokens.get(pos) {
+                return tok.token_type == TokenType::Colon;
+            }
+        }
+        false
     }
 
     // ---------- top level ----------
@@ -414,7 +445,6 @@ impl Parser {
     }
 
     pub fn parse_block(&mut self) -> EtherResult<Block> {
-        // {  statements }
         self.expect(TokenType::LBrace)?;
         let mut statements = Vec::new();
         while self.peek()? != TokenType::RBrace {
@@ -427,7 +457,6 @@ impl Parser {
     // ---------- statements ----------
 
     pub fn parse_stmt(&mut self) -> EtherResult<Stmt> {
-        // { let|return|if|while|block|  }
         match self.peek()? {
             TokenType::Let => {
                 self.next()?;
@@ -458,7 +487,7 @@ impl Parser {
     fn parse_var_decl(&mut self) -> EtherResult<VarDecl> {
         let name = self.expect_ident()?;
 
-        let ty = if self.peek()? == TokenType::Colon {
+        let ty = if let Ok(TokenType::Colon) = self.peek() {
             self.next()?;
             Some(self.parse_type()?)
         } else {
@@ -516,7 +545,8 @@ impl Parser {
     // ---------- expressions ----------
 
     pub fn parse_expr(&mut self) -> EtherResult<Expr> {
-        if self.peek()? == TokenType::LParen {
+        // Disambiguate between function definition (params):ret and parenthesized expr (expr)
+        if self.is_function_definition() {
             Ok(Expr::Function(self.parse_function(None)?))
         } else {
             self.parse_assignment()
