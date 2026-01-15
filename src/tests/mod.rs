@@ -599,3 +599,47 @@ mod semantic_analyzer_tests {
         assert!(analyze(code).is_err());
     }
 }
+
+#[cfg(test)]
+mod symbol_table_tests{
+
+    use crate::{error::*, lexer::*, llvm_ir_generator::*, parser::*,
+    type_checker::*, semantic_analyzer::*};
+    use std::assert_matches::assert_matches;
+
+    use crate::symbol_table::SymbolResolver;
+
+    #[test]
+    fn registers_function_symbol() {
+        let src =  r#"
+        fn sum_to_n(n: int): int {
+            let sum: int = 0;
+            let i: int = 0;
+            
+            while (i <= n) {
+                sum = sum + i;
+                i = i + 1;
+            }
+            
+            return sum;
+        }
+        
+        fn main(): int {
+            return sum_to_n(100);
+        }
+    "#         
+        ;
+        
+        let mut tokenizer = Tokenizer::new(src);
+        let tokens = tokenizer.tokenize(true);
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse_program().unwrap();
+
+        let mut resolver = SymbolResolver::new();
+        resolver.analyze_program(&program);
+
+        assert!(resolver.table.lookup("main").is_some());
+    }
+
+
+}
