@@ -225,7 +225,7 @@ fn create_enum_value(
     } else if num_variants <= 65536 {
         self.context.i16_type().const_int(variant_idx as u64, false).into()
     } else {
-        self.context.i32_type().const_int(variant_idx as u64, false).into()
+        self.context.i64_type().const_int(variant_idx as u64, false).into()
     };
     
     let enum_type = enum_info.enum_type;

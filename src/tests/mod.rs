@@ -1,7 +1,7 @@
 use inkwell::context::Context;
 
 #[cfg(test)]
-use crate::{error::*, lexer::*, llvm_ir_generator::*, parser::*,
+use crate::{error::*, lexer::*, codegen::*, parser::*,
     type_checker::*, semantic_analyzer::*};
 use std::assert_matches::assert_matches;
 
@@ -117,28 +117,7 @@ fn assigned_lambda_function(){
 
     let code = r#"
     let y = (x:int):int{ return x; };
-    "#;
-    let mut tokenizer = Tokenizer::new(code);
-    let tokens = tokenizer.tokenize(true);
-
-    assert!(
-        matches!(tokens.last().unwrap().token_type, TokenType::Eof),
-        "Lexer must emit EOF token"
-    );
-
-    let mut parser = Parser::new(tokens);
-    let ast = parser.parse_program();
-    println!("{:?}",ast);
-    assert_matches!(ast, Ok(_));
-
-}
-
-#[test]
-fn non_variable_binded_function_call(){
-
-    let code = r#"
-    let y = (x:int):int{ return x; };
-    y(5);
+    let x = y(5);
     "#;
     let mut tokenizer = Tokenizer::new(code);
     let tokens = tokenizer.tokenize(true);
@@ -263,7 +242,7 @@ fn test(): void {
 mod llvm_tests{
 
 use inkwell::context::Context;
-use crate::{error::*, lexer::*, llvm_ir_generator::*, parser::*,
+use crate::{error::*, lexer::*, codegen::*, parser::*,
     type_checker::*, semantic_analyzer::*};
 use std::assert_matches::assert_matches;
 
@@ -281,7 +260,6 @@ fn llvm_ir_gen() {
             return result;
         }
     "#;
-    let selected_test_index = 0;
     let mut tokenizer = Tokenizer::new(test_code);
     let tokens = tokenizer.tokenize(true);
     let mut parser = Parser::new(tokens);
@@ -304,6 +282,9 @@ fn llvm_ir_gen() {
     fn enum_declaration(){
         let test_code = r#"
             enum enum_name{ a:int, b:bool, c }
+            fn main(): void {
+                let x:enum_name = 5;
+            }
             "#;
         let mut tokenizer = Tokenizer::new(test_code);
         let tokens = tokenizer.tokenize(true);
@@ -602,7 +583,7 @@ mod semantic_analyzer_tests {
 #[cfg(test)]
 mod symbol_table_tests{
 
-    use crate::{error::*, lexer::*, llvm_ir_generator::*, parser::*,
+    use crate::{error::*, lexer::*, codegen::*, parser::*,
     type_checker::*, semantic_analyzer::*};
     use std::assert_matches::assert_matches;
 

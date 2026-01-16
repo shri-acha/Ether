@@ -2,7 +2,7 @@
 
 mod error;
 mod lexer;
-mod llvm_ir_generator;
+mod codegen;
 mod parser;
 mod symbol_table;
 mod tests;
