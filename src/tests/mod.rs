@@ -303,7 +303,8 @@ fn llvm_ir_gen() {
                 println!("Code generation error: {}", e);
                 }
             }
-        }
+    }
+
 }
 
 #[cfg(test)]
