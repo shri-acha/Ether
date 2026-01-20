@@ -41,7 +41,7 @@ pub struct StructDef {
 #[derive(Debug, PartialEq, Eq)]
 pub struct EnumDef {
     pub name: String,
-    pub fields: Vec<(String, Option<Type>)>, 
+    pub fields: Vec<(String, Option<Type>)>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -102,6 +102,7 @@ pub enum Expr {
     Field(Box<Expr>, String),
     Function(Function),
     Index(Box<Expr>, Box<Expr>),
+    EnumVariant(String, String), // enum_name, variant_name
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -173,11 +174,12 @@ impl Parser {
                 } else {
                     (1, 1)
                 };
-                ParserError{
+                ParserError {
                     err_string: "Unexpected end of input".into(),
                     line,
                     column,
-                }.into()
+                }
+                .into()
             })
     }
 
@@ -193,11 +195,12 @@ impl Parser {
             Ok(())
         } else {
             let (line, column) = self.get_position();
-        Err(ParserError{
+            Err(ParserError {
                 err_string: format!("Expected {:?}, got {:?}", expected, tok),
                 line,
                 column,
-            }.into())
+            }
+            .into())
         }
     }
 
@@ -206,11 +209,12 @@ impl Parser {
             TokenType::Identifier(s) => Ok(s.clone()),
             t => {
                 let (line, column) = self.get_position();
-                Err(ParserError{
+                Err(ParserError {
                     err_string: format!("Expected identifier, got {:?}", t),
                     line,
                     column,
-                }.into())
+                }
+                .into())
             }
         }
     }
@@ -226,7 +230,7 @@ impl Parser {
         }
         pos += 1;
         let mut depth = 1;
-        
+
         // Scan forward to find matching ')'
         while depth > 0 && pos < self.tokens.len() {
             match self.tokens[pos].token_type {
@@ -236,7 +240,7 @@ impl Parser {
             }
             pos += 1;
         }
-        
+
         // If we found the closing paren, check if the next token is ':'
         if depth == 0 {
             if let Some(tok) = self.tokens.get(pos) {
@@ -272,11 +276,12 @@ impl Parser {
             TokenType::StringLit(s) => Ok(Import { module: s.clone() }),
             t => {
                 let (line, column) = self.get_position();
-                Err(ParserError{
+                Err(ParserError {
                     err_string: format!("Expected string literal, got {:?}", t),
                     line,
                     column,
-                }.into())
+                }
+                .into())
             }
         }
     }
@@ -302,11 +307,12 @@ impl Parser {
             }
             t => {
                 let (line, column) = self.get_position();
-                Err(ParserError{
+                Err(ParserError {
                     err_string: format!("Invalid declaration start: {:?}", t),
                     line,
                     column,
-                }.into())
+                }
+                .into())
             }
         }
     }
@@ -354,7 +360,8 @@ impl Parser {
                     err_string: format!("Invalid type: {:?}", t),
                     line,
                     column,
-                }.into())
+                }
+                .into())
             }
         }
     }
@@ -384,8 +391,7 @@ impl Parser {
         Ok(StructDef { name, fields })
     }
 
-    fn parse_enum(&mut self)->EtherResult<EnumDef> {
-
+    fn parse_enum(&mut self) -> EtherResult<EnumDef> {
         let name = self.expect_ident()?;
         self.expect(TokenType::LBrace)?;
 
@@ -393,11 +399,11 @@ impl Parser {
         if self.peek()? != TokenType::RBrace {
             loop {
                 let fname = self.expect_ident()?;
-                if self.peek()? == TokenType::Colon{
+                if self.peek()? == TokenType::Colon {
                     self.next()?;
                     let ftype = self.parse_type().ok();
                     fields.push((fname, ftype));
-                } else{
+                } else {
                     fields.push((fname, None));
                 }
 
@@ -648,6 +654,23 @@ impl Parser {
         let mut expr = self.parse_primary()?;
         loop {
             match self.peek()? {
+                TokenType::DoubleColon => {
+                    // Only allow :: after an identifier (enum name)
+                    if let Expr::Identifier(enum_name) = expr {
+                        self.next()?;
+                        let variant_name = self.expect_ident()?;
+                        expr = Expr::EnumVariant(enum_name, variant_name);
+                    } else {
+                        let (line, column) = self.get_position();
+                        return Err(ParserError {
+                            err_string: ":: operator can only be used after an identifier"
+                                .to_string(),
+                            line,
+                            column,
+                        }
+                        .into());
+                    }
+                }
                 TokenType::LParen => {
                     self.next()?;
                     let mut args = Vec::new();
@@ -698,8 +721,10 @@ impl Parser {
                     err_string: format!("Invalid expression start: {:?}", t),
                     line,
                     column,
-                }).into())
+                })
+                .into())
             }
         }
     }
 }
+
