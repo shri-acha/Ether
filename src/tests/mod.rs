@@ -1,3 +1,5 @@
+mod llvm_test_file;
+
 use inkwell::context::Context;
 
 #[cfg(test)]
@@ -290,73 +292,6 @@ fn test(): void {
             "Test 3 - Error at line {}, column {}: {}",
             err.line, err.column, err
         );
-    }
-}
-
-#[cfg(test)]
-mod llvm_tests {
-
-    use crate::{codegen::*, error::*, lexer::*, parser::*, semantic_analyzer::*, type_checker::*};
-    use inkwell::context::Context;
-    use std::assert_matches::assert_matches;
-
-    #[test]
-    fn llvm_ir_gen() {
-        let test_code: &'static str = r#"
-        fn add(a: int, b: int): int {
-            return a + b;
-        }
-
-        fn main(): int {
-            let x: int = 10;
-            let y: int = 20;
-            let result: int = add(x, y);
-            return result;
-        }
-    "#;
-        let mut tokenizer = Tokenizer::new(test_code);
-        let tokens = tokenizer.tokenize(true);
-        let mut parser = Parser::new(tokens);
-        let parsed_tokens = parser.parse_program().unwrap();
-
-        let context = Context::create();
-        let mut codegen = CodeGen::new(&context, "my_module");
-
-        match codegen.compile_program(&parsed_tokens) {
-            Ok(_) => {
-                println!("{}", test_code);
-                println!("{}", codegen.get_ir());
-            }
-            Err(e) => {
-                println!("Code generation error: {}", e);
-            }
-        }
-    }
-    #[test]
-    fn enum_declaration() {
-        let test_code = r#"
-            enum enum_name{ a:int, b:bool, c }
-            fn main(): void {
-                let x:enum_name = 5;
-            }
-            "#;
-        let mut tokenizer = Tokenizer::new(test_code);
-        let tokens = tokenizer.tokenize(true);
-        let mut parser = Parser::new(tokens);
-        let parsed_tokens = parser.parse_program().unwrap();
-
-        let context = Context::create();
-        let mut codegen = CodeGen::new(&context, "my_module");
-
-        match codegen.compile_program(&parsed_tokens) {
-            Ok(_) => {
-                println!("{}", test_code);
-                println!("{}", codegen.get_ir());
-            }
-            Err(e) => {
-                println!("Code generation error: {}", e);
-            }
-        }
     }
 }
 
