@@ -1,8 +1,7 @@
 use inkwell::context::Context;
 
 #[cfg(test)]
-use crate::{error::*, lexer::*, codegen::*, parser::*,
-    type_checker::*, semantic_analyzer::*};
+use crate::{codegen::*, error::*, lexer::*, parser::*, semantic_analyzer::*, type_checker::*};
 use std::assert_matches::assert_matches;
 
 #[test]
@@ -113,8 +112,7 @@ fn ast_currying_test() {
 }
 
 #[test]
-fn assigned_lambda_function(){
-
+fn assigned_lambda_function() {
     let code = r#"
     let y = (x:int):int{ return x; };
     let x = y(5);
@@ -129,13 +127,12 @@ fn assigned_lambda_function(){
 
     let mut parser = Parser::new(tokens);
     let ast = parser.parse_program();
-    println!("{:?}",ast);
+    println!("{:?}", ast);
     assert_matches!(ast, Ok(_));
-
 }
 
 #[test]
-fn enum_design(){
+fn enum_design() {
     let code = r#"
     enum random{
         a,
@@ -153,11 +150,69 @@ fn enum_design(){
 
     let mut parser = Parser::new(tokens);
     let ast = parser.parse_program();
-    println!("{:?}",ast);
+    println!("{:?}", ast);
     assert_matches!(ast, Ok(_));
-
 }
 
+#[test]
+fn parser_enum_variant_access() {
+    let code = r#"
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+fn main(): void {
+    let x = Color::Red;
+    let y = Color::Green;
+}
+"#;
+
+    let mut tokenizer = Tokenizer::new(code);
+    let tokens = tokenizer.tokenize(true);
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program();
+    if let Err(e) = &program {
+        println!("Parser error: {:?}", e);
+    }
+    assert!(program.is_ok(), "Failed to parse enum variant access");
+
+    let program = program.unwrap();
+    assert_eq!(program.declarations.len(), 2);
+
+    // Check the enum declaration
+    if let Declaration::Enum(enum_def) = &program.declarations[0] {
+        assert_eq!(enum_def.name, "Color");
+        assert_eq!(enum_def.fields.len(), 3);
+        assert_eq!(enum_def.fields[0].0, "Red");
+        assert_eq!(enum_def.fields[1].0, "Green");
+        assert_eq!(enum_def.fields[2].0, "Blue");
+    } else {
+        panic!("Expected enum declaration");
+    }
+
+    // Check the function with enum variant access
+    if let Declaration::Function(func) = &program.declarations[1] {
+        assert_eq!(func.header.name, Some("main".to_string()));
+        assert_eq!(func.body.statements.len(), 2);
+
+        // First variable declaration: let x = Color::Red;
+        if let Stmt::Var(var_decl) = &func.body.statements[0] {
+            assert_eq!(var_decl.name, "x");
+            if let Expr::EnumVariant(enum_name, variant_name) = &var_decl.value {
+                assert_eq!(enum_name, "Color");
+                assert_eq!(variant_name, "Red");
+            } else {
+                panic!("Expected EnumVariant expression");
+            }
+        } else {
+            panic!("Expected variable declaration");
+        }
+    } else {
+        panic!("Expected function declaration");
+    }
+}
 #[test]
 fn error_location_reporting() {
     // Test 1: Error at the beginning of the code
@@ -239,16 +294,15 @@ fn test(): void {
 }
 
 #[cfg(test)]
-mod llvm_tests{
+mod llvm_tests {
 
-use inkwell::context::Context;
-use crate::{error::*, lexer::*, codegen::*, parser::*,
-    type_checker::*, semantic_analyzer::*};
-use std::assert_matches::assert_matches;
+    use crate::{codegen::*, error::*, lexer::*, parser::*, semantic_analyzer::*, type_checker::*};
+    use inkwell::context::Context;
+    use std::assert_matches::assert_matches;
 
-#[test]
-fn llvm_ir_gen() {
-    let test_code: &'static str =  r#"
+    #[test]
+    fn llvm_ir_gen() {
+        let test_code: &'static str = r#"
         fn add(a: int, b: int): int {
             return a + b;
         }
@@ -260,26 +314,26 @@ fn llvm_ir_gen() {
             return result;
         }
     "#;
-    let mut tokenizer = Tokenizer::new(test_code);
-    let tokens = tokenizer.tokenize(true);
-    let mut parser = Parser::new(tokens);
-    let parsed_tokens = parser.parse_program().unwrap();
+        let mut tokenizer = Tokenizer::new(test_code);
+        let tokens = tokenizer.tokenize(true);
+        let mut parser = Parser::new(tokens);
+        let parsed_tokens = parser.parse_program().unwrap();
 
-    let context = Context::create();
-    let mut codegen = CodeGen::new(&context, "my_module");
+        let context = Context::create();
+        let mut codegen = CodeGen::new(&context, "my_module");
 
-    match codegen.compile_program(&parsed_tokens) {
-        Ok(_) => {
-            println!("{}",test_code);
-            println!("{}",codegen.get_ir());
-        }
-        Err(e) => {
-            println!("Code generation error: {}", e);
+        match codegen.compile_program(&parsed_tokens) {
+            Ok(_) => {
+                println!("{}", test_code);
+                println!("{}", codegen.get_ir());
+            }
+            Err(e) => {
+                println!("Code generation error: {}", e);
             }
         }
     }
     #[test]
-    fn enum_declaration(){
+    fn enum_declaration() {
         let test_code = r#"
             enum enum_name{ a:int, b:bool, c }
             fn main(): void {
@@ -296,15 +350,14 @@ fn llvm_ir_gen() {
 
         match codegen.compile_program(&parsed_tokens) {
             Ok(_) => {
-                println!("{}",test_code);
-                println!("{}",codegen.get_ir());
+                println!("{}", test_code);
+                println!("{}", codegen.get_ir());
             }
             Err(e) => {
                 println!("Code generation error: {}", e);
-                }
             }
+        }
     }
-
 }
 
 #[cfg(test)]
@@ -330,7 +383,10 @@ mod type_tests {
         let checker = TypeChecker::new();
         let subst = Substitution::new();
 
-        assert_eq!(checker.infer_literal(&crate::parser::Literal::Int("42".to_string())), InferredType::Int);
+        assert_eq!(
+            checker.infer_literal(&crate::parser::Literal::Int("42".to_string())),
+            InferredType::Int
+        );
         // Note: infer_expr logic matches
     }
 
@@ -340,7 +396,11 @@ mod type_tests {
         let subst = Substitution::new();
         let (ty, _) = checker.infer_expr(&parse_expr("10 + 20"), &subst).unwrap();
         assert_eq!(ty, InferredType::Int);
-        assert!(checker.infer_expr(&parse_expr("10 + 3.14"), &subst).is_err());
+        assert!(
+            checker
+                .infer_expr(&parse_expr("10 + 3.14"), &subst)
+                .is_err()
+        );
     }
 
     #[test]
@@ -358,7 +418,9 @@ mod type_tests {
         let mut checker = TypeChecker::new();
         let subst = Substitution::new();
         let stmt = parse_stmt("let x = 5;");
-        checker.check_stmt(&stmt, &subst, &InferredType::Void).unwrap();
+        checker
+            .check_stmt(&stmt, &subst, &InferredType::Void)
+            .unwrap();
         let expr = parse_expr("x");
         let (ty, _) = checker.infer_expr(&expr, &subst).unwrap();
         assert_eq!(ty, InferredType::Int);
@@ -375,7 +437,9 @@ mod type_tests {
         let tokens = tokenizer.tokenize(true);
         let mut parser = Parser::new(tokens);
         let block = parser.parse_block().unwrap();
-        checker.check_block(&block, &subst, &InferredType::Void).unwrap();
+        checker
+            .check_block(&block, &subst, &InferredType::Void)
+            .unwrap();
         assert!(checker.env.lookup("inner").is_none());
     }
 
@@ -385,11 +449,27 @@ mod type_tests {
         let subst = Substitution::new();
         let block_ok = r#"{ return 10; }"#;
         let mut parser_ok = Parser::new(Tokenizer::new(block_ok).tokenize(true));
-        assert!(checker.check_block(&parser_ok.parse_block().unwrap(), &subst, &InferredType::Int).is_ok());
+        assert!(
+            checker
+                .check_block(
+                    &parser_ok.parse_block().unwrap(),
+                    &subst,
+                    &InferredType::Int
+                )
+                .is_ok()
+        );
 
         let block_err = r#"{ return 3.14; }"#;
         let mut parser_err = Parser::new(Tokenizer::new(block_err).tokenize(true));
-        assert!(checker.check_block(&parser_err.parse_block().unwrap(), &subst, &InferredType::Int).is_err());
+        assert!(
+            checker
+                .check_block(
+                    &parser_err.parse_block().unwrap(),
+                    &subst,
+                    &InferredType::Int
+                )
+                .is_err()
+        );
     }
 
     #[test]
@@ -398,12 +478,24 @@ mod type_tests {
         let subst = Substitution::new();
         let func_ty = InferredType::Function(
             vec![InferredType::Int, InferredType::Int],
-            Box::new(InferredType::Bool)
+            Box::new(InferredType::Bool),
         );
         checker.env.insert("compare".to_string(), func_ty);
-        assert!(checker.infer_expr(&parse_expr("compare(1, 2)"), &subst).is_ok());
-        assert!(checker.infer_expr(&parse_expr("compare(1)"), &subst).is_err());
-        assert!(checker.infer_expr(&parse_expr("compare(1, true)"), &subst).is_err());
+        assert!(
+            checker
+                .infer_expr(&parse_expr("compare(1, 2)"), &subst)
+                .is_ok()
+        );
+        assert!(
+            checker
+                .infer_expr(&parse_expr("compare(1)"), &subst)
+                .is_err()
+        );
+        assert!(
+            checker
+                .infer_expr(&parse_expr("compare(1, true)"), &subst)
+                .is_err()
+        );
     }
 
     #[test]
@@ -420,7 +512,9 @@ mod type_tests {
         let mut checker = TypeChecker::new();
         let subst = Substitution::new();
         let stmt = parse_stmt("let x = 5;");
-        checker.check_stmt(&stmt, &subst, &InferredType::Void).unwrap();
+        checker
+            .check_stmt(&stmt, &subst, &InferredType::Void)
+            .unwrap();
         checker.env.insert("x".to_string(), InferredType::Int);
         let expr = parse_expr("x + 1");
         let (ty, _) = checker.infer_expr(&expr, &subst).unwrap();
@@ -439,7 +533,11 @@ mod type_tests {
         let tokens = tokenizer.tokenize(true);
         let mut parser = Parser::new(tokens);
         let block = parser.parse_block().unwrap();
-        assert!(checker.check_block(&block, &subst, &InferredType::Float).is_ok());
+        assert!(
+            checker
+                .check_block(&block, &subst, &InferredType::Float)
+                .is_ok()
+        );
     }
 
     fn run_checker(source: &str, expected_ret: &InferredType) -> Result<TypeChecker, String> {
@@ -451,10 +549,14 @@ mod type_tests {
 
         if source.trim().starts_with('{') {
             let block = parser.parse_block().map_err(|e| e.to_string())?;
-            checker.check_block(&block, &subst, expected_ret).map_err(|e| e.to_string())?;
+            checker
+                .check_block(&block, &subst, expected_ret)
+                .map_err(|e| e.to_string())?;
         } else {
             let stmt = parser.parse_stmt().map_err(|e| e.to_string())?;
-            checker.check_stmt(&stmt, &subst, expected_ret).map_err(|e| e.to_string())?;
+            checker
+                .check_stmt(&stmt, &subst, expected_ret)
+                .map_err(|e| e.to_string())?;
         }
         Ok(checker)
     }
@@ -478,18 +580,16 @@ mod type_tests {
         let subst = Substitution::new();
 
         // Check statements individually to persist definitions in the current scope
-        let stmts = [
-            "let a = 5;",
-            "let b = 10;",
-            "let c = (a + b) * 2;",
-        ];
+        let stmts = ["let a = 5;", "let b = 10;", "let c = (a + b) * 2;"];
 
         for src in stmts {
             let mut tokenizer = Tokenizer::new(src);
             let tokens = tokenizer.tokenize(true);
             let mut parser = Parser::new(tokens);
             let stmt = parser.parse_stmt().expect("Failed to parse statement");
-            checker.check_stmt(&stmt, &subst, &InferredType::Void).expect("Type check failed");
+            checker
+                .check_stmt(&stmt, &subst, &InferredType::Void)
+                .expect("Type check failed");
         }
 
         // Verify lookup succeeds because the scope was never exited
@@ -504,14 +604,20 @@ mod type_tests {
             let z = x + y;
         }"#;
         let result = run_checker(source, &InferredType::Void);
-        assert!(result.is_err(), "Binary operation on mismatched types must fail");
+        assert!(
+            result.is_err(),
+            "Binary operation on mismatched types must fail"
+        );
     }
 
     #[test]
     fn test_recursive_definition_prevention() {
         let source = r#"let x = x + 1;"#;
         let result = run_checker(source, &InferredType::Void);
-        assert!(result.is_err(), "Should fail due to undefined identifier 'x'");
+        assert!(
+            result.is_err(),
+            "Should fail due to undefined identifier 'x'"
+        );
     }
 
     #[test]
@@ -536,7 +642,7 @@ mod semantic_analyzer_tests {
         let mut tokenizer = Tokenizer::new(source);
         let tokens = tokenizer.tokenize(true);
         let mut parser = Parser::new(tokens);
-        let program = parser.parse_program()?; 
+        let program = parser.parse_program()?;
         type_check_program(&program)
     }
 
@@ -582,17 +688,16 @@ mod semantic_analyzer_tests {
 }
 
 #[cfg(test)]
-mod symbol_table_tests{
+mod symbol_table_tests {
 
-    use crate::{error::*, lexer::*, codegen::*, parser::*,
-    type_checker::*, semantic_analyzer::*};
+    use crate::{codegen::*, error::*, lexer::*, parser::*, semantic_analyzer::*, type_checker::*};
     use std::assert_matches::assert_matches;
 
     use crate::symbol_table::SymbolResolver;
 
     #[test]
     fn registers_function_symbol() {
-        let src =  r#"
+        let src = r#"
         fn sum_to_n(n: int): int {
             let sum: int = 0;
             let i: int = 0;
@@ -608,9 +713,8 @@ mod symbol_table_tests{
         fn main(): int {
             return sum_to_n(100);
         }
-    "#         
-        ;
-        
+    "#;
+
         let mut tokenizer = Tokenizer::new(src);
         let tokens = tokenizer.tokenize(true);
         let mut parser = Parser::new(tokens);
@@ -621,6 +725,4 @@ mod symbol_table_tests{
 
         assert!(resolver.table.lookup("main").is_some());
     }
-
-
 }
