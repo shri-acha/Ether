@@ -595,6 +595,7 @@ fn extract_enum_payload(
             Expr::Field(obj, field) => self.compile_field(obj, field),
             Expr::Index(arr, idx) => self.compile_index(arr, idx),
             Expr::Function(_) => Err("Anonymous functions not yet supported".to_string()),
+            Expr::EnumVariant(enum_name, variant_name) => self.compile_enum_variant(enum_name, variant_name),
         }
     }
 
@@ -869,6 +870,10 @@ fn extract_enum_payload(
 
     fn compile_index(&mut self, _arr: &Expr, _idx: &Expr) -> Result<BasicValueEnum<'ctx>, String> {
         Err("Array indexing not yet implemented".to_string())
+    }
+
+    fn compile_enum_variant(&mut self, enum_name: &str, variant_name: &str) -> Result<BasicValueEnum<'ctx>, String> {
+        self.create_enum_value(enum_name, variant_name, None)
     }
 
     // ================= Output =================
