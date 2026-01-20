@@ -1,16 +1,16 @@
+use crate::parser::EnumDef;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
+use inkwell::types::StructType;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
 use inkwell::values::ValueKind;
-use inkwell::types::StructType;
-use std::path::Path;
-use crate::parser::EnumDef;
 use inkwell::values::{
     BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, PointerValue,
 };
 use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 use std::collections::HashMap;
+use std::path::Path;
 
 use crate::parser::{
     BinOp, Block, Declaration, Expr, Function, FunctionHeader, Import, Literal, Program, Stmt,
@@ -19,7 +19,7 @@ use crate::parser::{
 
 struct EnumInfo<'ctx> {
     enum_type: StructType<'ctx>,
-    variants: Vec<(String, Option<BasicTypeEnum<'ctx>>)>
+    variants: Vec<(String, Option<BasicTypeEnum<'ctx>>)>,
 }
 pub struct CodeGen<'ctx> {
     context: &'ctx Context,
@@ -77,7 +77,7 @@ impl<'ctx> CodeGen<'ctx> {
                 Declaration::Function(f) => self.compile_function(f)?,
                 Declaration::Var(v) => self.compile_global_var(v)?,
                 Declaration::Struct(_) => {} // Already handled
-                Declaration::Enum(_)=>{},
+                Declaration::Enum(_) => {}
             }
         }
 
@@ -114,7 +114,7 @@ impl<'ctx> CodeGen<'ctx> {
                         .cloned()
                         .ok_or_else(|| format!("Unknown custom type: {}", name))
                 }
-            },
+            }
             Type::Function(_) => {
                 // Function pointers
                 Ok(self
@@ -132,18 +132,20 @@ impl<'ctx> CodeGen<'ctx> {
 
     // ================= Struct Handling =================
 
-fn declare_struct(&mut self, struct_def: &StructDef) -> Result<(), String> {
-    let field_types: Result<Vec<_>, String> = struct_def.fields
-        .iter()
-        .map(|(_, ty)| self.convert_type(ty))
-        .collect();
-    
-    let field_types = field_types?;
-    let struct_type = self.context.struct_type(&field_types, false);
-    self.structs.insert(struct_def.name.clone(), struct_type.into());
-    
-    Ok(())
-}
+    fn declare_struct(&mut self, struct_def: &StructDef) -> Result<(), String> {
+        let field_types: Result<Vec<_>, String> = struct_def
+            .fields
+            .iter()
+            .map(|(_, ty)| self.convert_type(ty))
+            .collect();
+
+        let field_types = field_types?;
+        let struct_type = self.context.struct_type(&field_types, false);
+        self.structs
+            .insert(struct_def.name.clone(), struct_type.into());
+
+        Ok(())
+    }
     // ================= Enum Handling =================
     //
     // This has a bit of complications while trying to implement
@@ -154,118 +156,137 @@ fn declare_struct(&mut self, struct_def: &StructDef) -> Result<(), String> {
     // and also the alignment of the value as aparently llvm doesn't support
     // alignments. As cpu while fetching from memory has to align with types.
     //
-fn declare_enum(&mut self, enum_def: &EnumDef) -> Result<(), String> {
-    let mut variants = Vec::new();
-    let mut max_size = 0u64;
-    let mut max_align_type: Option<BasicTypeEnum<'ctx>> = None;
-    
-    for (field_name, field_type_opt) in &enum_def.fields {
-        if let Some(field_type) = field_type_opt {
-            let basic_ty = self.convert_type(field_type)?;
-            
-            let size = basic_ty.size_of()
-                .map(|s| s.get_zero_extended_constant())
-                .unwrap_or(Some(0))
-                .unwrap_or(0);
-            
-            if size > max_size {
-                max_size = size;
-                max_align_type = Some(basic_ty);
+    fn declare_enum(&mut self, enum_def: &EnumDef) -> Result<(), String> {
+        let mut variants = Vec::new();
+        let mut max_size = 0u64;
+        let mut max_align_type: Option<BasicTypeEnum<'ctx>> = None;
+
+        for (field_name, field_type_opt) in &enum_def.fields {
+            if let Some(field_type) = field_type_opt {
+                let basic_ty = self.convert_type(field_type)?;
+
+                let size = basic_ty
+                    .size_of()
+                    .map(|s| s.get_zero_extended_constant())
+                    .unwrap_or(Some(0))
+                    .unwrap_or(0);
+
+                if size > max_size {
+                    max_size = size;
+                    max_align_type = Some(basic_ty);
+                }
+
+                variants.push((field_name.clone(), Some(basic_ty)));
+            } else {
+                // Unit variant (no payload)
+                variants.push((field_name.clone(), None));
             }
-            
-            variants.push((field_name.clone(), Some(basic_ty)));
-        } else {
-            // Unit variant (no payload)
-            variants.push((field_name.clone(), None));
         }
+
+        let num_variants = enum_def.fields.len();
+        let discriminant_type = if num_variants <= 256 {
+            self.context.i8_type().into()
+        } else if num_variants <= 65536 {
+            self.context.i16_type().into()
+        } else {
+            self.context.i32_type().into()
+        };
+
+        let payload_type = max_align_type.unwrap_or_else(|| self.context.i8_type().into());
+
+        let enum_struct = self.context.opaque_struct_type(&enum_def.name);
+        enum_struct.set_body(&[discriminant_type, payload_type], false);
+
+        let enum_info = EnumInfo {
+            enum_type: enum_struct,
+            variants,
+        };
+
+        self.enums.insert(enum_def.name.clone(), enum_info);
+
+        Ok(())
     }
-    
-    let num_variants = enum_def.fields.len();
-    let discriminant_type = if num_variants <= 256 {
-        self.context.i8_type().into()
-    } else if num_variants <= 65536 {
-        self.context.i16_type().into()
-    } else {
-        self.context.i32_type().into()
-    };
-    
-    let payload_type = max_align_type.unwrap_or_else(|| {
-        self.context.i8_type().into()
-    });
-    
-    let enum_struct = self.context.opaque_struct_type(&enum_def.name);
-    enum_struct.set_body(&[discriminant_type, payload_type], false);
-    
-    let enum_info = EnumInfo {
-        enum_type: enum_struct,
-        variants,
-    };
-    
-    self.enums.insert(enum_def.name.clone(), enum_info);
-    
-    Ok(())
-}
 
-fn create_enum_value(
-    &mut self,
-    enum_name: &str,
-    variant_name: &str,
-    payload_value: Option<BasicValueEnum<'ctx>>,
-) -> Result<BasicValueEnum<'ctx>, String> {
-    let enum_info = self.enums.get(enum_name)
-        .ok_or_else(|| format!("Unknown enum: {}", enum_name))?;
-    
-    let variant_idx = enum_info.variants.iter()
-        .position(|(name, _)| name == variant_name)
-        .ok_or_else(|| format!("Unknown variant: {}", variant_name))?;
-    
-    let num_variants = enum_info.variants.len();
-    let discriminant_val: BasicValueEnum = if num_variants <= 256 {
-        self.context.i8_type().const_int(variant_idx as u64, false).into()
-    } else if num_variants <= 65536 {
-        self.context.i16_type().const_int(variant_idx as u64, false).into()
-    } else {
-        self.context.i64_type().const_int(variant_idx as u64, false).into()
-    };
-    
-    let enum_type = enum_info.enum_type;
-    let payload_field_type = enum_type.get_field_type_at_index(1)
-        .ok_or("Invalid enum structure")?;
-    
-    let payload_val = if let Some(val) = payload_value {
-        val
-    } else {
-        self.get_default_value(payload_field_type)
-    };
-    
-    let mut struct_val = enum_type.get_undef();
-    struct_val = self.builder.build_insert_value(struct_val, discriminant_val, 0, "with_discriminant")
-        .map_err(|e| format!("Failed to insert discriminant: {:?}", e))?
-        .into_struct_value();
-    struct_val = self.builder.build_insert_value(struct_val, payload_val, 1, "with_payload")
-        .map_err(|e| format!("Failed to insert payload: {:?}", e))?
-        .into_struct_value();
-    
-    Ok(struct_val.into())
-}
+    fn create_enum_value(
+        &mut self,
+        enum_name: &str,
+        variant_name: &str,
+        payload_value: Option<BasicValueEnum<'ctx>>,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let enum_info = self
+            .enums
+            .get(enum_name)
+            .ok_or_else(|| format!("Unknown enum: {}", enum_name))?;
 
-fn extract_enum_discriminant(
-    &mut self,
-    enum_value: BasicValueEnum<'ctx>,
-) -> Result<BasicValueEnum<'ctx>, String> {
-    let struct_val = enum_value.into_struct_value();
-    self.builder.build_extract_value(struct_val, 0, "discriminant")
-        .map_err(|e| format!("Failed to extract discriminant: {:?}", e))
-}
+        let variant_idx = enum_info
+            .variants
+            .iter()
+            .position(|(name, _)| name == variant_name)
+            .ok_or_else(|| format!("Unknown variant: {}", variant_name))?;
 
-fn extract_enum_payload(
-    &mut self,
-    enum_value: BasicValueEnum<'ctx>,
-) -> Result<BasicValueEnum<'ctx>, String> {
-    let struct_val = enum_value.into_struct_value();
-    self.builder.build_extract_value(struct_val, 1, "payload")
-        .map_err(|e| format!("Failed to extract payload: {:?}", e))
-}
+        let num_variants = enum_info.variants.len();
+        let discriminant_val: BasicValueEnum = if num_variants <= 256 {
+            self.context
+                .i8_type()
+                .const_int(variant_idx as u64, false)
+                .into()
+        } else if num_variants <= 65536 {
+            self.context
+                .i16_type()
+                .const_int(variant_idx as u64, false)
+                .into()
+        } else {
+            self.context
+                .i64_type()
+                .const_int(variant_idx as u64, false)
+                .into()
+        };
+
+        let enum_type = enum_info.enum_type;
+        let payload_field_type = enum_type
+            .get_field_type_at_index(1)
+            .ok_or("Invalid enum structure")?;
+
+        let payload_val = if let Some(val) = payload_value {
+            val
+        } else {
+            self.get_default_value(payload_field_type)
+        };
+
+        let mut struct_val = enum_type.get_undef();
+        struct_val = self
+            .builder
+            .build_insert_value(struct_val, discriminant_val, 0, "with_discriminant")
+            .map_err(|e| format!("Failed to insert discriminant: {:?}", e))?
+            .into_struct_value();
+        struct_val = self
+            .builder
+            .build_insert_value(struct_val, payload_val, 1, "with_payload")
+            .map_err(|e| format!("Failed to insert payload: {:?}", e))?
+            .into_struct_value();
+
+        Ok(struct_val.into())
+    }
+
+    fn extract_enum_discriminant(
+        &mut self,
+        enum_value: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let struct_val = enum_value.into_struct_value();
+        self.builder
+            .build_extract_value(struct_val, 0, "discriminant")
+            .map_err(|e| format!("Failed to extract discriminant: {:?}", e))
+    }
+
+    fn extract_enum_payload(
+        &mut self,
+        enum_value: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let struct_val = enum_value.into_struct_value();
+        self.builder
+            .build_extract_value(struct_val, 1, "payload")
+            .map_err(|e| format!("Failed to extract payload: {:?}", e))
+    }
 
     // ================= Function Handling =================
 
@@ -595,7 +616,9 @@ fn extract_enum_payload(
             Expr::Field(obj, field) => self.compile_field(obj, field),
             Expr::Index(arr, idx) => self.compile_index(arr, idx),
             Expr::Function(_) => Err("Anonymous functions not yet supported".to_string()),
-            Expr::EnumVariant(enum_name, variant_name) => self.compile_enum_variant(enum_name, variant_name),
+            Expr::EnumVariant(enum_name, variant_name) => {
+                self.compile_enum_variant(enum_name, variant_name)
+            }
         }
     }
 
@@ -872,13 +895,17 @@ fn extract_enum_payload(
         Err("Array indexing not yet implemented".to_string())
     }
 
-    fn compile_enum_variant(&mut self, enum_name: &str, variant_name: &str) -> Result<BasicValueEnum<'ctx>, String> {
+    fn compile_enum_variant(
+        &mut self,
+        enum_name: &str,
+        variant_name: &str,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
         self.create_enum_value(enum_name, variant_name, None)
     }
 
     // ================= Output =================
 
-    pub fn get_ir(&self)->String {
+    pub fn get_ir(&self) -> String {
         self.module.to_string()
     }
 
