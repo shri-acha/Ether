@@ -65,6 +65,7 @@ pub enum TokenType {
     Semicolon,
     Comma,
     Colon,
+    DoubleColon,
     Dot,
     Arrow,
 
@@ -495,6 +496,13 @@ impl Tokenizer {
 
             if ch == '-' && self.peek_char(1) == Some('>') {
                 tokens.push(Token::new(TokenType::Arrow, start_line, start_col));
+                self.advance();
+                self.advance();
+                continue;
+            }
+
+            if ch == ':' && self.peek_char(1) == Some(':') {
+                tokens.push(Token::new(TokenType::DoubleColon, start_line, start_col));
                 self.advance();
                 self.advance();
                 continue;
