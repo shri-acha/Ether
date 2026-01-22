@@ -412,7 +412,6 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
-<<<<<<< HEAD
     // ================= Runtime Linked Functions =================
 
     fn declare_runtime_linked_functions(&mut self) {
@@ -430,9 +429,6 @@ impl<'ctx> CodeGen<'ctx> {
 
 
     // ================= Global Variables =================
-=======
-    //  Global Variables
->>>>>>> be07476f9cc180a7dd5e5a5df68765f62923e2ae
 
     fn compile_global_var(&mut self, var: &VarDecl) -> Result<(), String> {
         let value = self.compile_expr(&var.value)?;
