@@ -2,6 +2,7 @@ use crate::parser::EnumDef;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
+use inkwell::module::Linkage;
 use inkwell::types::StructType;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
 use inkwell::values::ValueKind;
@@ -62,7 +63,8 @@ impl<'ctx> CodeGen<'ctx> {
             if let Declaration::Enum(e) = decl {
                 self.declare_enum(e)?;
             }
-        }
+        }  
+        self.declare_runtime_linked_functions();
 
         // Second pass: declare all functions
         for decl in &program.declarations {
@@ -98,7 +100,7 @@ impl<'ctx> CodeGen<'ctx> {
                     .i8_type()
                     .ptr_type(AddressSpace::default())
                     .into()),
-                "void" => Err("void is not a basic type".to_string()),
+                "void" =>  Ok(self.context.struct_type(&[], false).into()),
                 _ => Err(format!("Unknown primitive type: {}", name)),
             },
             Type::Array(inner) => {
@@ -155,6 +157,8 @@ impl<'ctx> CodeGen<'ctx> {
     // and the payload is able to handle the size of the maximum variant
     // and also the alignment of the value as aparently llvm doesn't support
     // alignments. As cpu while fetching from memory has to align with types.
+    //
+    // works now!
     //
     fn declare_enum(&mut self, enum_def: &EnumDef) -> Result<(), String> {
         let mut variants = Vec::new();
@@ -407,6 +411,22 @@ impl<'ctx> CodeGen<'ctx> {
             _ => panic!("Unsupported type for default value"),
         }
     }
+
+    // ================= Runtime Linked Functions =================
+
+    fn declare_runtime_linked_functions(&mut self) {
+        let i8_type = self.context.i8_type();
+        let i8_ptr_type = i8_type.ptr_type(AddressSpace::default());
+        let void_type = self.context.void_type();
+        
+        // Declare __Eth_print
+        let print_fn_type = void_type.fn_type(&[i8_ptr_type.into()], false);
+        self.module.add_function("__Eth_print", print_fn_type, None);
+        // Declare __Eth_read 
+        let read_fn_type = i8_ptr_type.fn_type(&[], false);
+        self.module.add_function("__Eth_read", read_fn_type, Some(Linkage::External));
+    }
+
 
     // ================= Global Variables =================
 
@@ -829,6 +849,41 @@ impl<'ctx> CodeGen<'ctx> {
             return Err("Only direct function calls supported".to_string());
         };
 
+    if func_name == "print" || func_name == "__Eth_print" {
+        if args.len() != 1 {
+            return Err("print expects 1 argument".to_string());
+        }
+        
+        let arg_val = self.compile_expr(&args[0])?;
+        
+        let print_fn = self.module
+            .get_function("__Eth_print")
+            .ok_or("__Eth_print should be declared")?;
+        
+        self.builder
+            .build_call(print_fn, &[arg_val.into()], "print_call")
+            .map_err(|e| format!("Failed to build print call: {:?}", e))?;
+        
+        // Return a dummy void value (you might need to adjust this)
+        let unit_type = self.context.struct_type(&[], false);
+        return Ok(unit_type.const_zero().into());
+    }
+
+    if func_name == "read" || func_name == "__Eth_read" { 
+ 
+        let read_fn = self.module
+            .get_function("__Eth_read")
+            .ok_or("__Eth_read should be declared")?;
+        
+        let call_site = self.builder
+            .build_call(read_fn, &[], "read_call")
+            .map_err(|e| format!("Failed to build print call: {:?}", e))?;
+        
+        match call_site.try_as_basic_value() {
+            ValueKind::Basic(value) => return Ok(value),
+            ValueKind::Instruction(_) => return Err("read should return a value".to_string()),
+        }
+    }
         // Copy out the FunctionValue to avoid immutable borrow lingering
         let function = *self
             .functions
@@ -854,38 +909,6 @@ impl<'ctx> CodeGen<'ctx> {
             ValueKind::Instruction(_) => Err("Function returned void".to_string()),
         }
     }
-    // fn compile_call(
-    //     &mut self,
-    //     func_expr: &Expr,
-    //     args: &[Expr],
-    // ) -> Result<BasicValueEnum<'ctx>, String> {
-    //     let func_name = if let Expr::Identifier(name) = func_expr {
-    //         name
-    //     } else {
-    //         return Err("Only direct function calls supported".to_string());
-    //     };
-    //
-    //     let function = self
-    //         .functions
-    //         .get(func_name)
-    //         .ok_or_else(|| format!("Undefined function: {}", func_name))?;
-    //
-    //     let mut compiled_args = Vec::new();
-    //     for arg in args {
-    //         let val = self.compile_expr(arg)?;
-    //         compiled_args.push(val.into());
-    //     }
-    //
-    //     let call_site = self
-    //         .builder
-    //         .build_call(*function, &compiled_args, "call")
-    //         .map_err(|e| format!("Failed to build call: {:?}", e))?;
-    //
-    //     match call_site.try_as_basic_value() {
-    //         ValueKind::Basic(value) => Ok(value),
-    //         ValueKind::Instruction(_) => Err("Function returned void".to_string()),
-    //     }
-    // }
 
     fn compile_field(&mut self, _obj: &Expr, _field: &str) -> Result<BasicValueEnum<'ctx>, String> {
         Err("Struct field access not yet implemented".to_string())

@@ -5,7 +5,6 @@ mod codegen;
 mod parser;
 mod symbol_table;
 mod tests;
-mod stdlib;
 mod semantic_analyzer;
 mod type_checker;
 

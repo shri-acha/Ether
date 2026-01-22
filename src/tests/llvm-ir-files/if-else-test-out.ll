@@ -1,6 +1,10 @@
 ; ModuleID = 'my_module'
 source_filename = "my_module"
 
+declare void @__Eth_print(ptr)
+
+declare ptr @__Eth_read()
+
 define i64 @fibonacci(i64 %0) {
 entry:
   %n = alloca i64, align 8

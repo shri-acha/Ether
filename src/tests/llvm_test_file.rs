@@ -119,6 +119,67 @@ mod llvm_tests {
             }
         }
     }
+    #[test]
+    fn print_statement() {
+        let test_code = r#"
+        fn main(): int {
+            let _: void = print("hello from Ether!"); 
+            return 0;
+        }
+            "#;
+        let mut tokenizer = Tokenizer::new(test_code);
+        let tokens = tokenizer.tokenize(true);
+        let mut parser = Parser::new(tokens);
+        let parsed_tokens = parser.parse_program().unwrap();
+
+        let context = Context::create();
+        let mut codegen = CodeGen::new(&context, "my_module");
+
+        match codegen.compile_program(&parsed_tokens) {
+            Ok(_) => {
+                println!("{}", test_code);
+                let ir = codegen.get_ir();
+                println!("{}",ir);
+                fs::write("./src/tests/llvm-ir-files/print-test.ll", ir)
+                    .expect("Failed to write IR");
+            }
+            Err(e) => {
+                println!("Code generation error: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn read_statement() {
+        let test_code = r#"
+        fn main(): int {
+            let _: void = print("hello from Ether!"); 
+            let input_value: string = read(); 
+            let _: void = print(input_value); 
+            return 0;
+        }
+            "#;
+        let mut tokenizer = Tokenizer::new(test_code);
+        let tokens = tokenizer.tokenize(true);
+        let mut parser = Parser::new(tokens);
+        let parsed_tokens = parser.parse_program().unwrap();
+
+        let context = Context::create();
+        let mut codegen = CodeGen::new(&context, "my_module");
+
+        match codegen.compile_program(&parsed_tokens) {
+            Ok(_) => {
+                println!("{}", test_code);
+                let ir = codegen.get_ir();
+                println!("{}",ir);
+                fs::write("./src/tests/llvm-ir-files/read-test.ll", ir)
+                    .expect("Failed to write IR");
+            }
+            Err(e) => {
+                println!("Code generation error: {}", e);
+            }
+        }
+    }
 
     #[test]
     fn enum_declaration() {

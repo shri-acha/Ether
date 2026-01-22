@@ -1,6 +1,10 @@
 ; ModuleID = 'my_module'
 source_filename = "my_module"
 
+declare void @__Eth_print(ptr)
+
+declare ptr @__Eth_read()
+
 define i64 @add(i64 %0, i64 %1) {
 entry:
   %a = alloca i64, align 8
