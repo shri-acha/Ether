@@ -65,6 +65,7 @@ mod llvm_tests {
         let tokens = tokenizer.tokenize(true);
         let mut parser = Parser::new(tokens);
         let parsed_tokens = parser.parse_program().unwrap();
+        // println!("{:?}", parsed_tokens);
 
         let context = Context::create();
         let mut codegen = CodeGen::new(&context, "my_module");
@@ -201,6 +202,43 @@ mod llvm_tests {
             Ok(_) => {
                 println!("{}", test_code);
                 println!("{}", codegen.get_ir());
+            }
+            Err(e) => {
+                println!("Code generation error: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn llvm_ir_for_loop_with_range() {
+        let test_code: &'static str = r#"
+        fn main(): int {
+            let end_value = 6;
+            let result:int = 0;
+            for (i in 2..end_value) {
+                result = result + i;
+            }
+            return result;
+        }
+    "#;
+        let mut tokenizer = Tokenizer::new(test_code);
+        let tokens = tokenizer.tokenize(true);
+        let mut parser = Parser::new(tokens);
+        let parsed_tokens = parser.parse_program().unwrap();
+
+        let context = Context::create();
+        let mut codegen = CodeGen::new(&context, "my_module");
+
+        match codegen.compile_program(&parsed_tokens) {
+            Ok(_) => {
+                println!("{}", test_code);
+                println!("{}", codegen.get_ir());
+                let ir = codegen.get_ir();
+                fs::write(
+                    "./src/tests/llvm-ir-files/for-loop-with-range-test-out.ll",
+                    ir,
+                )
+                .expect("Failed to write IR");
             }
             Err(e) => {
                 println!("Code generation error: {}", e);

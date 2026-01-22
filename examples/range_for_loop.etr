@@ -1,0 +1,13 @@
+fn main() {
+    // Example 1: Simple for loop with range operator
+    for (i in 0..5) {
+        print(i);
+    }
+
+    // Example 2: For loop with variables
+    let start = 1;
+    let end = 10;
+    for (x in start..end) {
+        print(x);
+    }
+}

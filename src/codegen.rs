@@ -52,7 +52,7 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
-    // ================= Main Entry Point =================
+    //  Main Entry Point
 
     pub fn compile_program(&mut self, program: &Program) -> Result<(), String> {
         // First pass: declare all structs
@@ -86,7 +86,7 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
-    // ================= Type Conversion =================
+    //  Type Conversion
 
     fn convert_type(&self, ty: &Type) -> Result<BasicTypeEnum<'ctx>, String> {
         match ty {
@@ -132,7 +132,7 @@ impl<'ctx> CodeGen<'ctx> {
         matches!(ty, Type::Primitive(name) if name == "void")
     }
 
-    // ================= Struct Handling =================
+    //  Struct Handling
 
     fn declare_struct(&mut self, struct_def: &StructDef) -> Result<(), String> {
         let field_types: Result<Vec<_>, String> = struct_def
@@ -148,7 +148,7 @@ impl<'ctx> CodeGen<'ctx> {
 
         Ok(())
     }
-    // ================= Enum Handling =================
+    //  Enum Handling
     //
     // This has a bit of complications while trying to implement
     // llvm doesn't have native support for enums/tagged unions
@@ -292,7 +292,7 @@ impl<'ctx> CodeGen<'ctx> {
             .map_err(|e| format!("Failed to extract payload: {:?}", e))
     }
 
-    // ================= Function Handling =================
+    //  Function Handling
 
     fn declare_function(&mut self, function: &Function) -> Result<FunctionValue<'ctx>, String> {
         let name = function
@@ -412,6 +412,7 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
+<<<<<<< HEAD
     // ================= Runtime Linked Functions =================
 
     fn declare_runtime_linked_functions(&mut self) {
@@ -429,6 +430,9 @@ impl<'ctx> CodeGen<'ctx> {
 
 
     // ================= Global Variables =================
+=======
+    //  Global Variables
+>>>>>>> be07476f9cc180a7dd5e5a5df68765f62923e2ae
 
     fn compile_global_var(&mut self, var: &VarDecl) -> Result<(), String> {
         let value = self.compile_expr(&var.value)?;
@@ -440,7 +444,7 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
-    // ================= Block & Statements =================
+    //  Block & Statements
 
     fn compile_block(&mut self, block: &Block) -> Result<(), String> {
         for stmt in &block.statements {
@@ -618,12 +622,259 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
-    fn compile_for(&mut self, _name: &str, _iter: &Expr, _body: &Block) -> Result<(), String> {
-        // For loop implementation would require iterator protocol
-        Err("For loops not yet implemented".to_string())
+    // fn compile_for(&mut self, _name: &str, _iter: &Expr, _body: &Block) -> Result<(), String> {
+    //     // For loop implementation would require iterator protocol
+    //     Err("For loops not yet implemented".to_string())
+    // }
+    fn compile_for(&mut self, name: &str, iter: &Expr, body: &Block) -> Result<(), String> {
+        // For loops work by iterating over a range or collection
+        // We'll implement: for (i in range_expr) { body }
+        // where range_expr should evaluate to an array or range
+
+        let parent_fn = self
+            .builder
+            .get_insert_block()
+            .unwrap()
+            .get_parent()
+            .unwrap();
+
+        // Create basic blocks for the loop
+        let init_bb = self.context.append_basic_block(parent_fn, "for.init");
+        let cond_bb = self.context.append_basic_block(parent_fn, "for.cond");
+        let body_bb = self.context.append_basic_block(parent_fn, "for.body");
+        let inc_bb = self.context.append_basic_block(parent_fn, "for.inc");
+        let end_bb = self.context.append_basic_block(parent_fn, "for.end");
+
+        // Jump to initialization
+        self.builder
+            .build_unconditional_branch(init_bb)
+            .map_err(|e| format!("Failed to build branch: {:?}", e))?;
+
+        // === INITIALIZATION BLOCK ===
+        self.builder.position_at_end(init_bb);
+
+        // Extract range bounds directly without compiling the entire expression
+        // (compile_expr would reject the range operator)
+
+        // Determine if it's an array (pointer) iteration or a range iteration
+
+        // For now, let's implement array iteration
+        // Assume iter_value is a pointer to the start of an array
+        // We need to know the length - for this implementation,
+        // we'll assume a convention where arrays are passed with length
+
+        // Create loop counter variable
+        let counter_type = self.context.i64_type();
+        let counter = self
+            .builder
+            .build_alloca(counter_type, "for.counter")
+            .map_err(|e| format!("Failed to allocate counter: {:?}", e))?;
+
+        // Initialize counter to 0
+        self.builder
+            .build_store(counter, counter_type.const_zero())
+            .map_err(|e| format!("Failed to store counter: {:?}", e))?;
+
+        // For array iteration, we need the array length
+        // This is a simplified implementation - in a real compiler,
+        // you'd track array lengths separately or use a struct { ptr, len }
+
+        // For demonstration, let's assume we're iterating a fixed range
+        // We'll check if the iterator is actually a range expression
+        // If iter is a function call like "range(0, 10)", we handle it specially
+
+        let (start_val, end_val) = self.extract_range_bounds(iter)?;
+
+        // Store the loop bounds
+        let start_var = self
+            .builder
+            .build_alloca(counter_type, "for.start")
+            .map_err(|e| format!("Failed to allocate start: {:?}", e))?;
+        self.builder
+            .build_store(start_var, start_val)
+            .map_err(|e| format!("Failed to store start: {:?}", e))?;
+
+        let end_var = self
+            .builder
+            .build_alloca(counter_type, "for.end")
+            .map_err(|e| format!("Failed to allocate end: {:?}", e))?;
+        self.builder
+            .build_store(end_var, end_val)
+            .map_err(|e| format!("Failed to store end: {:?}", e))?;
+
+        // Set counter to start value
+        self.builder
+            .build_store(counter, start_val)
+            .map_err(|e| format!("Failed to initialize counter: {:?}", e))?;
+
+        // Jump to condition check
+        self.builder
+            .build_unconditional_branch(cond_bb)
+            .map_err(|e| format!("Failed to build branch: {:?}", e))?;
+
+        // === CONDITION BLOCK ===
+        self.builder.position_at_end(cond_bb);
+
+        // Load current counter value
+        let current_counter = self
+            .builder
+            .build_load(counter_type, counter, "counter.val")
+            .map_err(|e| format!("Failed to load counter: {:?}", e))?
+            .into_int_value();
+
+        // Load end value
+        let end_value = self
+            .builder
+            .build_load(counter_type, end_var, "end.val")
+            .map_err(|e| format!("Failed to load end: {:?}", e))?
+            .into_int_value();
+
+        // Check if counter < end
+        let cond = self
+            .builder
+            .build_int_compare(IntPredicate::SLT, current_counter, end_value, "for.cond")
+            .map_err(|e| format!("Failed to build comparison: {:?}", e))?;
+
+        // Branch based on condition
+        self.builder
+            .build_conditional_branch(cond, body_bb, end_bb)
+            .map_err(|e| format!("Failed to build conditional branch: {:?}", e))?;
+
+        // === BODY BLOCK ===
+        self.builder.position_at_end(body_bb);
+
+        // Save current variable state
+        let prev_vars = self.variables.clone();
+        let prev_types = self.variable_types.clone();
+
+        // Create the loop variable and bind it to the current counter value
+        let loop_var_type = counter_type.as_basic_type_enum();
+        let loop_var = self
+            .builder
+            .build_alloca(loop_var_type, name)
+            .map_err(|e| format!("Failed to allocate loop variable: {:?}", e))?;
+
+        // Load current counter and store in loop variable
+        let counter_val = self
+            .builder
+            .build_load(counter_type, counter, "counter.load")
+            .map_err(|e| format!("Failed to load counter: {:?}", e))?;
+
+        self.builder
+            .build_store(loop_var, counter_val)
+            .map_err(|e| format!("Failed to store loop variable: {:?}", e))?;
+
+        // Add loop variable to symbol table
+        self.variables.insert(name.to_string(), loop_var);
+        self.variable_types.insert(name.to_string(), loop_var_type);
+
+        // Compile the loop body
+        self.compile_block(body)?;
+
+        // Restore variable state (remove loop variable from scope)
+        self.variables = prev_vars;
+        self.variable_types = prev_types;
+
+        // Jump to increment if no terminator (return/break)
+        if self
+            .builder
+            .get_insert_block()
+            .unwrap()
+            .get_terminator()
+            .is_none()
+        {
+            self.builder
+                .build_unconditional_branch(inc_bb)
+                .map_err(|e| format!("Failed to build branch: {:?}", e))?;
+        }
+
+        // === INCREMENT BLOCK ===
+        self.builder.position_at_end(inc_bb);
+
+        // Load counter
+        let current = self
+            .builder
+            .build_load(counter_type, counter, "counter.inc.load")
+            .map_err(|e| format!("Failed to load counter: {:?}", e))?
+            .into_int_value();
+
+        // Increment by 1
+        let incremented = self
+            .builder
+            .build_int_add(current, counter_type.const_int(1, false), "counter.inc")
+            .map_err(|e| format!("Failed to increment counter: {:?}", e))?;
+
+        // Store back
+        self.builder
+            .build_store(counter, incremented)
+            .map_err(|e| format!("Failed to store incremented counter: {:?}", e))?;
+
+        // Jump back to condition check
+        self.builder
+            .build_unconditional_branch(cond_bb)
+            .map_err(|e| format!("Failed to build branch: {:?}", e))?;
+
+        // === END BLOCK ===
+        self.builder.position_at_end(end_bb);
+
+        Ok(())
     }
 
-    // ================= Expressions =================
+    // Helper method to extract range bounds from iterator expression
+    fn extract_range_bounds(
+        &mut self,
+        iter: &Expr,
+    ) -> Result<(BasicValueEnum<'ctx>, BasicValueEnum<'ctx>), String> {
+        // Check if iter is a binary range operator: start..end
+        if let Expr::Binary(start_expr, op, end_expr) = iter {
+            if op == &BinOp::Range {
+                // Compile the bounds directly without going through compile_expr
+                // which would reject the Range operator
+                let start = match start_expr.as_ref() {
+                    Expr::Literal(lit) => self.compile_literal(lit)?,
+                    Expr::Identifier(name) => self.compile_identifier(name)?,
+                    other => self.compile_expr(other)?,
+                };
+                let end = match end_expr.as_ref() {
+                    Expr::Literal(lit) => self.compile_literal(lit)?,
+                    Expr::Identifier(name) => self.compile_identifier(name)?,
+                    other => self.compile_expr(other)?,
+                };
+                return Ok((start, end));
+            }
+        }
+
+        // // Check if iter is a function call to "range"
+        // if let Expr::Call(func_expr, args) = iter {
+        //     if let Expr::Identifier(func_name) = func_expr.as_ref() {
+        //         if func_name == "range" {
+        //             // Handle range(start, end) or range(end)
+        //             match args.len() {
+        //                 1 => {
+        //                     // range(n) means 0..n
+        //                     let end = self.compile_expr(&args[0])?;
+        //                     let start = self.context.i64_type().const_zero().into();
+        //                     return Ok((start, end));
+        //                 }
+        //                 2 => {
+        //                     // range(start, end) means start..end
+        //                     let start = self.compile_expr(&args[0])?;
+        //                     let end = self.compile_expr(&args[1])?;
+        //                     return Ok((start, end));
+        //                 }
+        //                 _ => return Err("range() takes 1 or 2 arguments".to_string()),
+        //             }
+        //         }
+        //     }
+        // }
+
+        // If not a range call or range operator, try to treat as an array
+        // For arrays, we'd need length information
+        // This is a simplified fallback - assume it's a range 0..10
+        Err("For loop iterator must be a range (e.g., 0..10), range() call, or array (array iteration not fully implemented)".to_string())
+    }
+
+    //  Expressions
 
     fn compile_expr(&mut self, expr: &Expr) -> Result<BasicValueEnum<'ctx>, String> {
         match expr {
@@ -712,6 +963,11 @@ impl<'ctx> CodeGen<'ctx> {
         op: &BinOp,
         right: &Expr,
     ) -> Result<BasicValueEnum<'ctx>, String> {
+        // Range operator should only be used in for loops, not as a standalone expression
+        if op == &BinOp::Range {
+            return Err("Range operator (..) can only be used in for loops".to_string());
+        }
+
         let lhs = self.compile_expr(left)?;
         let rhs = self.compile_expr(right)?;
 
@@ -753,6 +1009,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                     BinOp::And => self.builder.build_and(l, r, "and").map(|v| v.into()),
                     BinOp::Or => self.builder.build_or(l, r, "or").map(|v| v.into()),
+                    BinOp::Range => unreachable!("Range should be handled above"),
                 }
                 .map_err(|e| format!("Failed to build int op: {:?}", e))?;
 
@@ -926,7 +1183,7 @@ impl<'ctx> CodeGen<'ctx> {
         self.create_enum_value(enum_name, variant_name, None)
     }
 
-    // ================= Output =================
+    //  Output
 
     pub fn get_ir(&self) -> String {
         self.module.to_string()
