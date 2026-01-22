@@ -68,6 +68,7 @@ pub enum TokenType {
     DoubleColon,
     Dot,
     Arrow,
+    Range, // .. operator for ranges
 
     // Special
     Eof,
@@ -503,6 +504,13 @@ impl Tokenizer {
 
             if ch == ':' && self.peek_char(1) == Some(':') {
                 tokens.push(Token::new(TokenType::DoubleColon, start_line, start_col));
+                self.advance();
+                self.advance();
+                continue;
+            }
+
+            if ch == '.' && self.peek_char(1) == Some('.') {
+                tokens.push(Token::new(TokenType::Range, start_line, start_col));
                 self.advance();
                 self.advance();
                 continue;

@@ -128,6 +128,7 @@ pub enum BinOp {
     Ge,
     And,
     Or,
+    Range,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -591,7 +592,7 @@ impl Parser {
     }
 
     fn parse_equality(&mut self) -> EtherResult<Expr> {
-        let mut expr = self.parse_add()?;
+        let mut expr = self.parse_range()?;
         while let Some(op) = match self.peek()? {
             TokenType::Eq => Some(BinOp::Eq),
             TokenType::Ne => Some(BinOp::Ne),
@@ -602,8 +603,18 @@ impl Parser {
             _ => None,
         } {
             self.next()?;
-            let rhs = self.parse_add()?;
+            let rhs = self.parse_range()?;
             expr = Expr::Binary(Box::new(expr), op, Box::new(rhs));
+        }
+        Ok(expr)
+    }
+
+    fn parse_range(&mut self) -> EtherResult<Expr> {
+        let mut expr = self.parse_add()?;
+        while self.peek()? == TokenType::Range {
+            self.next()?;
+            let rhs = self.parse_add()?;
+            expr = Expr::Binary(Box::new(expr), BinOp::Range, Box::new(rhs));
         }
         Ok(expr)
     }

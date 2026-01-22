@@ -204,7 +204,7 @@ impl TypeChecker {
             Expr::Binary(left, op, right) => {
                 // 1. Infer left operand
                 let (left_ty, s1) = self.infer_expr(left, subst)?;
-                
+
                 // 2. Infer right operand using substitution from left (s1)
                 let (right_ty, s2) = self.infer_expr(right, &s1)?;
 
@@ -229,10 +229,12 @@ impl TypeChecker {
                     BinOp::And | BinOp::Or => {
                         let s3 = unify(&left_ty_current, &InferredType::Bool)?;
                         let s4 = unify(&apply_subst(&right_ty, &s3), &InferredType::Bool)?;
-                        
+
                         let final_subst = compose_subst(&compose_subst(&s2, &s3), &s4);
                         Ok((InferredType::Bool, final_subst))
                     }
+
+                    BinOp::Range => todo!(),
                 }
             }
 
@@ -427,35 +429,35 @@ impl TypeChecker {
             }
 
             crate::parser::Stmt::For { name, iter, body } => {
-            // Infer the type of the collection/iterable
-            let (iter_ty, s1) = self.infer_expr(iter, subst)?;
-            
-            // The iterable must be an Array(T)
-            // Create a fresh type variable for the element type
-            let element_ty_var = InferredType::Var(self.var_gen.fresh());
-            let expected_iter_ty = InferredType::Array(Box::new(element_ty_var.clone()));
-            
-            let s2 = unify(&iter_ty, &expected_iter_ty)?;
-            let mut current_subst = compose_subst(&s1, &s2);
-            
-            // Resolve the concrete element type
-            let resolved_element_ty = apply_subst(&element_ty_var, &current_subst);
+                // Infer the type of the collection/iterable
+                let (iter_ty, s1) = self.infer_expr(iter, subst)?;
 
-            // Open scope for the loop iterator variable
-            self.env.push_scope();
-            
-            // Insert the loop variable 'name' with the element type T
-            self.env.insert(name.clone(), resolved_element_ty);
+                // The iterable must be an Array(T)
+                // Create a fresh type variable for the element type
+                let element_ty_var = InferredType::Var(self.var_gen.fresh());
+                let expected_iter_ty = InferredType::Array(Box::new(element_ty_var.clone()));
 
-            // Check the body block
-            let s3 = self.check_block(body, &current_subst, ret_ty)?;
-            current_subst = compose_subst(&current_subst, &s3);
+                let s2 = unify(&iter_ty, &expected_iter_ty)?;
+                let mut current_subst = compose_subst(&s1, &s2);
 
-            // Close scope to remove loop variable
-            self.env.pop_scope();
-            
-            Ok(current_subst)
-        }
+                // Resolve the concrete element type
+                let resolved_element_ty = apply_subst(&element_ty_var, &current_subst);
+
+                // Open scope for the loop iterator variable
+                self.env.push_scope();
+
+                // Insert the loop variable 'name' with the element type T
+                self.env.insert(name.clone(), resolved_element_ty);
+
+                // Check the body block
+                let s3 = self.check_block(body, &current_subst, ret_ty)?;
+                current_subst = compose_subst(&current_subst, &s3);
+
+                // Close scope to remove loop variable
+                self.env.pop_scope();
+
+                Ok(current_subst)
+            }
         }
     }
 }
