@@ -43,10 +43,6 @@ pub extern "C" fn __Eth_read() -> *const c_char {
                     READ_BUFFER[..len].copy_from_slice(&bytes[..len]);
                 }
                 READ_BUFFER[len] = 0; // Null terminator
-                
-                // Debug output
-                eprintln!("Read {} bytes: {:?}", len, &READ_BUFFER[..len.min(20)]);
-                
                 READ_BUFFER.as_ptr() as *const c_char
             }
         }
