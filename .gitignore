@@ -24,6 +24,4 @@ target
 # Added by cargo
 
 /target
-*.o
 *.out
-*.a

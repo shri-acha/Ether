@@ -633,14 +633,9 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
-    // fn compile_for(&mut self, _name: &str, _iter: &Expr, _body: &Block) -> Result<(), String> {
-    //     // For loop implementation would require iterator protocol
-    //     Err("For loops not yet implemented".to_string())
-    // }
     fn compile_for(&mut self, name: &str, iter: &Expr, body: &Block) -> Result<(), String> {
-        // For loops work by iterating over a range or collection
-        // We'll implement: for (i in range_expr) { body }
-        // where range_expr should evaluate to an array or range
+        // for (i in range_expr) { body }
+        // range_expr should evaluate to an array or range
 
         let parent_fn = self
             .builder
