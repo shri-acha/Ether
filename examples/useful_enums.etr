@@ -1,0 +1,32 @@
+
+struct Radius {
+  r:int 
+}
+
+struct Params {
+  a:int,
+  b:int
+}
+
+struct Length {
+  a:int,
+  b:int
+}
+
+enum FaceShape{
+  Circle: Radius,
+  Oval: Params,
+  Square: Lenght
+}
+
+// this is useful as faceshape is now a generic being able to be any of the types
+// with an attribute useful to the object type.
+
+struct Person{
+  age: int,
+  face_shape: FaceShape
+}
+
+fn main(): void {
+  let person_1 = Person{ age:1, face_shape: FaceShape::Circle(3) };
+}

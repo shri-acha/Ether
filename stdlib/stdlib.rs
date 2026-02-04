@@ -1,5 +1,5 @@
-use std::ffi::{CStr, CString};
-use std::io::{self, Write};
+use std::ffi::{CStr};
+use std::io::{self};
 use std::os::raw::{c_char,c_longlong};
 
 #[no_mangle]
@@ -23,7 +23,7 @@ pub extern "C" fn __Eth_print_str(val: *const c_char) {
 
 #[no_mangle]
 pub extern "C" fn __Eth_print_i64(val: c_longlong) {
-    unsafe { println!("{}", val); }
+    println!("{}", val);
 }
 
 static mut READ_BUFFER: [u8; 4096] = [0; 4096];

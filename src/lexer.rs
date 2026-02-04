@@ -259,6 +259,7 @@ impl Tokenizer {
             "if" => TokenType::If,
             "else" => TokenType::Else,
             "while" => TokenType::While,
+            "map" => TokenType::Map,
             "for" => TokenType::For,
             "return" => TokenType::Return,
             "import" => TokenType::Import,

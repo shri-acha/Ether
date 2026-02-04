@@ -1,11 +1,13 @@
 ; ModuleID = 'my_module'
 source_filename = "my_module"
 
-declare void @__Eth_print(ptr)
+declare void @__Eth_print_str(ptr)
+
+declare void @__Eth_print_i64(i64)
 
 declare ptr @__Eth_read()
 
-define i64 @add(i64 %0, i64 %1) {
+define internal i64 @add(i64 %0, i64 %1) {
 entry:
   %a = alloca i64, align 8
   store i64 %0, ptr %a, align 4

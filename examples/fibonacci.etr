@@ -1,0 +1,18 @@
+fn fibonacci(max_no: int): int{
+  if (max_no < 0) {
+    return 0;
+  }
+  if (max_no == 1){
+    return 1;
+  }
+  return fibonacci(max_no-1)+fibonacci(max_no-2);
+}
+
+
+
+fn main():void {
+  for (i in 1..10) {
+    let result = fibonacci(i);
+    print(result);
+  }
+}
