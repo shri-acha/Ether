@@ -1,33 +1,34 @@
-use crate::parser::Parser;
-use crate::lexer::Tokenizer;
-use inkwell::context::Context; 
-use inkwell::targets::{Target, TargetMachine, InitializationConfig, RelocMode, CodeModel, FileType};
-use inkwell::OptimizationLevel;
 use crate::codegen::CodeGen;
-use std::path::Path;
+use crate::lexer::Tokenizer;
+use crate::parser::Parser;
+use inkwell::OptimizationLevel;
+use inkwell::context::Context;
+use inkwell::targets::{
+    CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
+};
 use std::fs;
+use std::path::Path;
 
 #[derive(clap::Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub(crate) struct EthArgs {
-    /// Level of optimization 0,1,2,3 
+    /// Level of optimization 0,1,2,3
     #[arg(short = 'O', long, default_value_t = 0)]
-    level_of_optimization: u8, 
-    /// Files that you want to link post compilation 
+    level_of_optimization: u8,
+    /// Files that you want to link post compilation
     #[arg(short, long)]
-    link: Vec<String>, 
-    /// Relocation stratergy 
+    link: Vec<String>,
+    /// Relocation stratergy
     #[arg(short, long,default_value_t =String::from(""))]
     relocation_stratergy: String,
     #[arg(short, long, default_value_t = String::from("e.o"))]
     output: String,
-    /// Files that you want to compile 
+    /// Files that you want to compile
     #[arg(required = true)]
     files: Vec<String>,
 }
 
 pub fn handle_eth_args(args: &EthArgs) {
-
     Target::initialize_native(&InitializationConfig::default())
         .expect("Failed to initialize native target");
 
@@ -49,14 +50,11 @@ pub fn handle_eth_args(args: &EthArgs) {
         _ => RelocMode::Default,
     };
 
-
-
-    for input_file in &args.files{
-
+    for input_file in &args.files {
         let contents = fs::read_to_string(input_file).expect("Failed to read file"); // TODO: work
-                                                                                     // on
-                                                                                     // buffering
-                                                                                     // input file
+        // on
+        // buffering
+        // input file
         let mut tokenizer = Tokenizer::new(&contents);
         let tokens = tokenizer.tokenize(true);
         let mut parser = Parser::new(tokens);
@@ -65,9 +63,11 @@ pub fn handle_eth_args(args: &EthArgs) {
         let context = Context::create();
         let mut codegen = CodeGen::new(&context, &args.output);
 
-        codegen.compile_program(&parsed_tokens).expect("Failed to compile LLVM");
+        codegen
+            .compile_program(&parsed_tokens)
+            .expect("Failed to compile LLVM");
 
-        let execution_engine = codegen
+        let _execution_engine = codegen
             .get_module()
             .create_jit_execution_engine(opt_level)
             .expect("Failed to create JIT execution engine");
@@ -87,7 +87,7 @@ pub fn handle_eth_args(args: &EthArgs) {
 
         let output_file = Path::new(&args.output);
         target_machine
-                .write_to_file(codegen.get_module(), FileType::Object, &output_file)
-                .expect("Failed to write object file");
+            .write_to_file(codegen.get_module(), FileType::Object, &output_file)
+            .expect("Failed to write object file");
     }
 }

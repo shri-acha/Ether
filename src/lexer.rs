@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 
-use crate::error::{EtherError, EtherResult};
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]

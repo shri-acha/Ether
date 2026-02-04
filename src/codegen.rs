@@ -4,18 +4,15 @@ use inkwell::context::Context;
 use inkwell::module::Linkage;
 use inkwell::module::Module;
 use inkwell::types::StructType;
-use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
+use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::ValueKind;
-use inkwell::values::{
-    BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, PointerValue,
-};
+use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue};
 use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 use std::collections::HashMap;
-use std::path::Path;
 
 use crate::parser::{
-    BinOp, Block, Declaration, Expr, Function, FunctionHeader, Import, Literal, Program, Stmt,
-    StructDef, Type, UnOp, VarDecl,
+    BinOp, Block, Declaration, Expr, Function, FunctionHeader, Literal, Program, Stmt, StructDef,
+    Type, UnOp, VarDecl,
 };
 
 struct EnumInfo<'ctx> {
@@ -306,12 +303,16 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         let fn_type = self.get_function_type(&function.header)?;
-        let mut fn_val;
-        if name == "main"{
-            fn_val = self.module.add_function(name, fn_type, Some(Linkage::External));
+        let fn_val;
+        if name == "main" {
+            fn_val = self
+                .module
+                .add_function(name, fn_type, Some(Linkage::External));
             fn_val.set_call_conventions(0);
-        }else{
-            fn_val = self.module.add_function(name, fn_type, Some(Linkage::Internal));
+        } else {
+            fn_val = self
+                .module
+                .add_function(name, fn_type, Some(Linkage::Internal));
         }
 
         self.functions.insert(name.clone(), fn_val);
@@ -428,11 +429,13 @@ impl<'ctx> CodeGen<'ctx> {
 
         // Declare __Eth_print_str
         let print_fn_str_type = void_type.fn_type(&[i8_ptr_type.into()], false);
-        self.module.add_function("__Eth_print_str", print_fn_str_type, None);
+        self.module
+            .add_function("__Eth_print_str", print_fn_str_type, None);
 
         // Declare __Eth_print_i64
         let print_fn_i64_type = void_type.fn_type(&[i64_type.into()], false);
-        self.module.add_function("__Eth_print_i64", print_fn_i64_type, None);
+        self.module
+            .add_function("__Eth_print_i64", print_fn_i64_type, None);
 
         // Declare __Eth_read
         let read_fn_type = i8_ptr_type.fn_type(&[], false);
@@ -1131,37 +1134,38 @@ impl<'ctx> CodeGen<'ctx> {
 
             let arg_val = self.compile_expr(&args[0])?;
             match &args[0] {
-                Expr::Literal(lit)=>{
-                    match lit {
-                        Literal::String(s) => {
-                            self.builder
-                                .build_call(print_fn_str, &[arg_val.into()], "print_call")
-                                .map_err(|e| format!("Failed to build print call: {:?}", e))?;
+                Expr::Literal(lit) => match lit {
+                    Literal::String(_s) => {
+                        self.builder
+                            .build_call(print_fn_str, &[arg_val.into()], "print_call")
+                            .map_err(|e| format!("Failed to build print call: {:?}", e))?;
 
-                            let unit_type = self.context.struct_type(&[], false);
-                            return Ok(unit_type.const_zero().into());
-                        }
-                        Literal::Int(s) => {
-                            self.builder
-                                .build_call(print_fn_i64, &[arg_val.into()], "print_call")
-                                .map_err(|e| format!("Failed to build print call: {:?}", e))?;
-
-                            let unit_type = self.context.struct_type(&[], false);
-                            return Ok(unit_type.const_zero().into());
-                        }
-                         _=>{
-                             return Err("Missing implementation for the type!".to_string());
-                         }
+                        let unit_type = self.context.struct_type(&[], false);
+                        return Ok(unit_type.const_zero().into());
                     }
+                    Literal::Int(_s) => {
+                        self.builder
+                            .build_call(print_fn_i64, &[arg_val.into()], "print_call")
+                            .map_err(|e| format!("Failed to build print call: {:?}", e))?;
 
-                }
-                Expr::Identifier(identifier_name)=>{
-                    let variable_value = self.variables.get(identifier_name)
-                                .ok_or(format!("Failed to find correspoding variable"))?;
-                    let variable_type = self.variable_types.get(identifier_name)
-                                .ok_or(format!("Failed to any value assigned to the variable"))?;
+                        let unit_type = self.context.struct_type(&[], false);
+                        return Ok(unit_type.const_zero().into());
+                    }
+                    _ => {
+                        return Err("Missing implementation for the type!".to_string());
+                    }
+                },
+                Expr::Identifier(identifier_name) => {
+                    let _variable_value = self
+                        .variables
+                        .get(identifier_name)
+                        .ok_or(format!("Failed to find correspoding variable"))?;
+                    let variable_type = self
+                        .variable_types
+                        .get(identifier_name)
+                        .ok_or(format!("Failed to any value assigned to the variable"))?;
                     match variable_type {
-                        BasicTypeEnum::IntType(_)=>{
+                        BasicTypeEnum::IntType(_) => {
                             self.builder
                                 .build_call(print_fn_i64, &[arg_val.into()], "print_call")
                                 .map_err(|e| format!("Failed to build print call: {:?}", e))?;
@@ -1169,7 +1173,7 @@ impl<'ctx> CodeGen<'ctx> {
                             let unit_type = self.context.struct_type(&[], false);
                             return Ok(unit_type.const_zero().into());
                         }
-                         BasicTypeEnum::PointerType(_)=>{
+                        BasicTypeEnum::PointerType(_) => {
                             self.builder
                                 .build_call(print_fn_str, &[arg_val.into()], "print_call")
                                 .map_err(|e| format!("Failed to build print call: {:?}", e))?;
@@ -1177,16 +1181,15 @@ impl<'ctx> CodeGen<'ctx> {
                             let unit_type = self.context.struct_type(&[], false);
                             return Ok(unit_type.const_zero().into());
                         }
-                         _=>{
-                             return Err("Missing implementation for the type!".to_string());
-                         }
+                        _ => {
+                            return Err("Missing implementation for the type!".to_string());
+                        }
                     }
                 }
-                _=>{
-                             return Err("Missing implementation for the type!".to_string());
+                _ => {
+                    return Err("Missing implementation for the type!".to_string());
                 }
             }
-
         }
 
         if func_name == "read" || func_name == "__Eth_read" {
