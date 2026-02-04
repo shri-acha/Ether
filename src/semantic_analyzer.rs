@@ -1,6 +1,6 @@
-use crate::parser::Program;
-use crate::type_checker::{TypeChecker, Substitution, InferredType};
 use crate::error::{EtherError, TypeErrorDetail};
+use crate::parser::Program;
+use crate::type_checker::{InferredType, Substitution, TypeChecker};
 
 pub fn type_check_program(program: &Program) -> Result<(), EtherError> {
     let mut checker = TypeChecker::new();
@@ -9,8 +9,13 @@ pub fn type_check_program(program: &Program) -> Result<(), EtherError> {
     // Pass 1: Register all function headers (and other globals) to allow forward references
     for decl in &program.declarations {
         if let crate::parser::Declaration::Function(func) = decl {
-            checker.convert_function_header(&func.header)
-                .map_err(|e| TypeErrorDetail{err_string: e, line: 0, column: 0})?;
+            checker
+                .convert_function_header(&func.header)
+                .map_err(|e| TypeErrorDetail {
+                    err_string: e,
+                    line: 0,
+                    column: 0,
+                })?;
         }
         // Structs/Enums would also be registered here in a full implementation
     }
@@ -19,18 +24,29 @@ pub fn type_check_program(program: &Program) -> Result<(), EtherError> {
     for decl in &program.declarations {
         match decl {
             crate::parser::Declaration::Var(var) => {
-                checker.check_stmt(&crate::parser::Stmt::Var(var.clone()), &subst, &InferredType::Void)
-                    .map_err(|e| TypeErrorDetail{err_string: e.to_string(), line: 0, column: 0})?;
+                checker
+                    .check_stmt(
+                        &crate::parser::Stmt::Var(var.clone()),
+                        &subst,
+                        &InferredType::Void,
+                    )
+                    .map_err(|e| TypeErrorDetail {
+                        err_string: e.to_string(),
+                        line: 0,
+                        column: 0,
+                    })?;
             }
             crate::parser::Declaration::Function(func) => {
                 // Retrieve the already registered function type
-                let func_name = func.header.name.as_ref().ok_or(
-                    TypeErrorDetail{err_string: "Anonymous function at top level".to_string(), line: 0, column: 0}
-                )?;
-                
+                let func_name = func.header.name.as_ref().ok_or(TypeErrorDetail {
+                    err_string: "Anonymous function at top level".to_string(),
+                    line: 0,
+                    column: 0,
+                })?;
+
                 // We clone to avoid borrowing issues while mutating env
                 let func_ty = checker.env.lookup(func_name).unwrap().clone();
-                
+
                 if let InferredType::Function(param_types, ret_ty) = func_ty {
                     // Create a scope for the function parameters
                     checker.env.push_scope();
@@ -45,14 +61,19 @@ pub fn type_check_program(program: &Program) -> Result<(), EtherError> {
                     }
 
                     // Check the function body
-                    checker.check_block(&func.body, &subst, &ret_ty)
-                        .map_err(|e| TypeErrorDetail{err_string: e, line: 0, column: 0})?;
+                    checker
+                        .check_block(&func.body, &subst, &ret_ty)
+                        .map_err(|e| TypeErrorDetail {
+                            err_string: e,
+                            line: 0,
+                            column: 0,
+                        })?;
 
                     // Clean up the parameter scope
                     checker.env.pop_scope();
                 }
             }
-            _ => {} 
+            _ => {}
         }
     }
     Ok(())

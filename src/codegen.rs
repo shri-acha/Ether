@@ -1,8 +1,8 @@
 use crate::parser::EnumDef;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
-use inkwell::module::Module;
 use inkwell::module::Linkage;
+use inkwell::module::Module;
 use inkwell::types::StructType;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
 use inkwell::values::ValueKind;
@@ -63,7 +63,7 @@ impl<'ctx> CodeGen<'ctx> {
             if let Declaration::Enum(e) = decl {
                 self.declare_enum(e)?;
             }
-        }  
+        }
         self.declare_runtime_linked_functions();
 
         // Second pass: declare all functions
@@ -100,7 +100,7 @@ impl<'ctx> CodeGen<'ctx> {
                     .i8_type()
                     .ptr_type(AddressSpace::default())
                     .into()),
-                "void" =>  Ok(self.context.struct_type(&[], false).into()),
+                "void" => Ok(self.context.struct_type(&[], false).into()),
                 _ => Err(format!("Unknown primitive type: {}", name)),
             },
             Type::Array(inner) => {
@@ -306,7 +306,13 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         let fn_type = self.get_function_type(&function.header)?;
-        let fn_val = self.module.add_function(name, fn_type, None);
+        let mut fn_val;
+        if name == "main"{
+            fn_val = self.module.add_function(name, fn_type, Some(Linkage::External));
+            fn_val.set_call_conventions(0);
+        }else{
+            fn_val = self.module.add_function(name, fn_type, Some(Linkage::Internal));
+        }
 
         self.functions.insert(name.clone(), fn_val);
         Ok(fn_val)
@@ -416,17 +422,23 @@ impl<'ctx> CodeGen<'ctx> {
 
     fn declare_runtime_linked_functions(&mut self) {
         let i8_type = self.context.i8_type();
+        let i64_type = self.context.i64_type();
         let i8_ptr_type = i8_type.ptr_type(AddressSpace::default());
         let void_type = self.context.void_type();
-        
-        // Declare __Eth_print
-        let print_fn_type = void_type.fn_type(&[i8_ptr_type.into()], false);
-        self.module.add_function("__Eth_print", print_fn_type, None);
-        // Declare __Eth_read 
-        let read_fn_type = i8_ptr_type.fn_type(&[], false);
-        self.module.add_function("__Eth_read", read_fn_type, Some(Linkage::External));
-    }
 
+        // Declare __Eth_print_str
+        let print_fn_str_type = void_type.fn_type(&[i8_ptr_type.into()], false);
+        self.module.add_function("__Eth_print_str", print_fn_str_type, None);
+
+        // Declare __Eth_print_i64
+        let print_fn_i64_type = void_type.fn_type(&[i64_type.into()], false);
+        self.module.add_function("__Eth_print_i64", print_fn_i64_type, None);
+
+        // Declare __Eth_read
+        let read_fn_type = i8_ptr_type.fn_type(&[], false);
+        self.module
+            .add_function("__Eth_read", read_fn_type, Some(Linkage::External));
+    }
 
     // ================= Global Variables =================
 
@@ -1102,41 +1114,97 @@ impl<'ctx> CodeGen<'ctx> {
             return Err("Only direct function calls supported".to_string());
         };
 
-    if func_name == "print" || func_name == "__Eth_print" {
-        if args.len() != 1 {
-            return Err("print expects 1 argument".to_string());
-        }
-        
-        let arg_val = self.compile_expr(&args[0])?;
-        
-        let print_fn = self.module
-            .get_function("__Eth_print")
-            .ok_or("__Eth_print should be declared")?;
-        
-        self.builder
-            .build_call(print_fn, &[arg_val.into()], "print_call")
-            .map_err(|e| format!("Failed to build print call: {:?}", e))?;
-        
-        // Return a dummy void value (you might need to adjust this)
-        let unit_type = self.context.struct_type(&[], false);
-        return Ok(unit_type.const_zero().into());
-    }
+        if func_name == "print" || func_name == "__Eth_print" {
+            if args.len() != 1 {
+                return Err("print expects 1 argument".to_string());
+            }
 
-    if func_name == "read" || func_name == "__Eth_read" { 
- 
-        let read_fn = self.module
-            .get_function("__Eth_read")
-            .ok_or("__Eth_read should be declared")?;
-        
-        let call_site = self.builder
-            .build_call(read_fn, &[], "read_call")
-            .map_err(|e| format!("Failed to build print call: {:?}", e))?;
-        
-        match call_site.try_as_basic_value() {
-            ValueKind::Basic(value) => return Ok(value),
-            ValueKind::Instruction(_) => return Err("read should return a value".to_string()),
+            let print_fn_str = self
+                .module
+                .get_function("__Eth_print_str")
+                .ok_or("__Eth_print variants should be declared")?;
+
+            let print_fn_i64 = self
+                .module
+                .get_function("__Eth_print_i64")
+                .ok_or("__Eth_print variants should be declared")?;
+
+            let arg_val = self.compile_expr(&args[0])?;
+            match &args[0] {
+                Expr::Literal(lit)=>{
+                    match lit {
+                        Literal::String(s) => {
+                            self.builder
+                                .build_call(print_fn_str, &[arg_val.into()], "print_call")
+                                .map_err(|e| format!("Failed to build print call: {:?}", e))?;
+
+                            let unit_type = self.context.struct_type(&[], false);
+                            return Ok(unit_type.const_zero().into());
+                        }
+                        Literal::Int(s) => {
+                            self.builder
+                                .build_call(print_fn_i64, &[arg_val.into()], "print_call")
+                                .map_err(|e| format!("Failed to build print call: {:?}", e))?;
+
+                            let unit_type = self.context.struct_type(&[], false);
+                            return Ok(unit_type.const_zero().into());
+                        }
+                         _=>{
+                             return Err("Missing implementation for the type!".to_string());
+                         }
+                    }
+
+                }
+                Expr::Identifier(identifier_name)=>{
+                    let variable_value = self.variables.get(identifier_name)
+                                .ok_or(format!("Failed to find correspoding variable"))?;
+                    let variable_type = self.variable_types.get(identifier_name)
+                                .ok_or(format!("Failed to any value assigned to the variable"))?;
+                    match variable_type {
+                        BasicTypeEnum::IntType(_)=>{
+                            self.builder
+                                .build_call(print_fn_i64, &[arg_val.into()], "print_call")
+                                .map_err(|e| format!("Failed to build print call: {:?}", e))?;
+
+                            let unit_type = self.context.struct_type(&[], false);
+                            return Ok(unit_type.const_zero().into());
+                        }
+                         BasicTypeEnum::PointerType(_)=>{
+                            self.builder
+                                .build_call(print_fn_str, &[arg_val.into()], "print_call")
+                                .map_err(|e| format!("Failed to build print call: {:?}", e))?;
+
+                            let unit_type = self.context.struct_type(&[], false);
+                            return Ok(unit_type.const_zero().into());
+                        }
+                         _=>{
+                             return Err("Missing implementation for the type!".to_string());
+                         }
+                    }
+                }
+                _=>{
+                             return Err("Missing implementation for the type!".to_string());
+                }
+            }
+
         }
-    }
+
+        if func_name == "read" || func_name == "__Eth_read" {
+            let read_fn = self
+                .module
+                .get_function("__Eth_read")
+                .ok_or("__Eth_read should be declared")?;
+
+            let call_site = self
+                .builder
+                .build_call(read_fn, &[], "read_call")
+                .map_err(|e| format!("Failed to build print call: {:?}", e))?;
+
+            match call_site.try_as_basic_value() {
+                ValueKind::Basic(value) => return Ok(value),
+                ValueKind::Instruction(_) => return Err("read should return a value".to_string()),
+            }
+        }
         // Copy out the FunctionValue to avoid immutable borrow lingering
         let function = *self
             .functions

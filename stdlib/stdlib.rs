@@ -1,9 +1,9 @@
 use std::ffi::{CStr, CString};
 use std::io::{self, Write};
-use std::os::raw::c_char;
+use std::os::raw::{c_char,c_longlong};
 
 #[no_mangle]
-pub extern "C" fn __Eth_print(val: *const c_char) {
+pub extern "C" fn __Eth_print_str(val: *const c_char) {
     unsafe {
         if val.is_null() {
             eprintln!("Error: null pointer passed to __Eth_print");
@@ -21,8 +21,12 @@ pub extern "C" fn __Eth_print(val: *const c_char) {
     }
 }
 
-static mut READ_BUFFER: [u8; 4096] = [0; 4096];
+#[no_mangle]
+pub extern "C" fn __Eth_print_i64(val: c_longlong) {
+    unsafe { println!("{}", val); }
+}
 
+static mut READ_BUFFER: [u8; 4096] = [0; 4096];
 #[no_mangle]
 pub extern "C" fn __Eth_read() -> *const c_char {
     let mut input = String::new();

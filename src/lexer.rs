@@ -11,6 +11,7 @@ pub enum TokenType {
     If,
     Else,
     While,
+    Map,
     For,
     Return,
     Import,

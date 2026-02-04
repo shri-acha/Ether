@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use crate::parser::*;
 use crate::error::{EtherError, TypeErrorDetail};
+use crate::parser::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SymbolKind {
@@ -42,11 +42,7 @@ impl SymbolTable {
         self.scopes.len() - 1
     }
 
-    pub fn insert(
-        &mut self,
-        name: String,
-        kind: SymbolKind,
-    ) -> Result<(), EtherError> {
+    pub fn insert(&mut self, name: String, kind: SymbolKind) -> Result<(), EtherError> {
         // FIX: compute scope_level BEFORE mutable borrow
         let scope_level = self.current_scope_level();
         let current_scope = self.scopes.last_mut().unwrap();
@@ -103,18 +99,12 @@ impl SymbolResolver {
         match decl {
             Declaration::Function(func) => self.analyze_function(func),
 
-            Declaration::Var(var) => {
-                self.table.insert(var.name.clone(), SymbolKind::Variable)
-            }
+            Declaration::Var(var) => self.table.insert(var.name.clone(), SymbolKind::Variable),
 
-            Declaration::Struct(def) => {
-                self.table.insert(def.name.clone(), SymbolKind::Struct)
-            }
+            Declaration::Struct(def) => self.table.insert(def.name.clone(), SymbolKind::Struct),
 
             // FIX: handle Enum explicitly
-            Declaration::Enum(def) => {
-                self.table.insert(def.name.clone(), SymbolKind::Struct)
-            }
+            Declaration::Enum(def) => self.table.insert(def.name.clone(), SymbolKind::Struct),
         }
     }
 
@@ -152,9 +142,7 @@ impl SymbolResolver {
 
     fn analyze_stmt(&mut self, stmt: &Stmt) -> Result<(), EtherError> {
         match stmt {
-            Stmt::Var(var) => {
-                self.table.insert(var.name.clone(), SymbolKind::Variable)
-            }
+            Stmt::Var(var) => self.table.insert(var.name.clone(), SymbolKind::Variable),
 
             Stmt::Block(block) => self.analyze_block(block),
 
@@ -171,11 +159,13 @@ impl SymbolResolver {
                 Ok(())
             }
 
-            Stmt::While { cond: _, body } => {
-                self.analyze_block(body)
-            }
+            Stmt::While { cond: _, body } => self.analyze_block(body),
 
-            Stmt::For { name, iter: _, body } => {
+            Stmt::For {
+                name,
+                iter: _,
+                body,
+            } => {
                 self.table.enter_scope();
                 self.table.insert(name.clone(), SymbolKind::Variable)?;
                 self.analyze_block(body)?;

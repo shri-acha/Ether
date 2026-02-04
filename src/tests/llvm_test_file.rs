@@ -140,7 +140,7 @@ mod llvm_tests {
             Ok(_) => {
                 println!("{}", test_code);
                 let ir = codegen.get_ir();
-                println!("{}",ir);
+                println!("{}", ir);
                 fs::write("./src/tests/llvm-ir-files/print-test.ll", ir)
                     .expect("Failed to write IR");
             }
@@ -172,7 +172,7 @@ mod llvm_tests {
             Ok(_) => {
                 println!("{}", test_code);
                 let ir = codegen.get_ir();
-                println!("{}",ir);
+                println!("{}", ir);
                 fs::write("./src/tests/llvm-ir-files/read-test.ll", ir)
                     .expect("Failed to write IR");
             }
