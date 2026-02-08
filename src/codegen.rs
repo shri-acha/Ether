@@ -11,8 +11,8 @@ use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 use std::collections::HashMap;
 
 use crate::parser::{
-    BinOp, Block, Declaration, Expr, Function, FunctionHeader, Literal, MatchArm, Pattern, Program,
-    Stmt, StructDef, Type, UnOp, VarDecl,
+    BinOp, Block, Declaration, Expr, Function, FunctionHeader, Literal, Program, Stmt, StructDef,
+    Type, UnOp, VarDecl,
 };
 
 struct EnumInfo<'ctx> {
@@ -491,7 +491,6 @@ impl<'ctx> CodeGen<'ctx> {
             } => self.compile_if(cond, then_block, else_block.as_ref()),
             Stmt::While { cond, body } => self.compile_while(cond, body),
             Stmt::For { name, iter, body } => self.compile_for(name, iter, body),
-            Stmt::Match { scrutinee, arms } => self.compile_match(scrutinee, arms),
         }
     }
 
@@ -825,128 +824,6 @@ impl<'ctx> CodeGen<'ctx> {
         self.builder.position_at_end(end_bb);
 
         Ok(())
-    }
-
-    fn compile_match(&mut self, scrutinee: &Expr, arms: &[MatchArm]) -> Result<(), String> {
-        if arms.is_empty() {
-            return Err("Match statement must have at least one arm".to_string());
-        }
-
-        let scrutinee_val = self.compile_expr(scrutinee)?;
-        
-        let parent_fn = self
-            .builder
-            .get_insert_block()
-            .unwrap()
-            .get_parent()
-            .unwrap();
-
-        let merge_bb = self.context.append_basic_block(parent_fn, "match.end");
-
-        // Compile each arm as a chain of if-else conditions
-        for (i, arm) in arms.iter().enumerate() {
-            let is_last = i == arms.len() - 1;
-            
-            let arm_body_bb = self
-                .context
-                .append_basic_block(parent_fn, &format!("match.arm{}", i));
-            let next_check_bb = if !is_last {
-                self.context
-                    .append_basic_block(parent_fn, &format!("match.check{}", i + 1))
-            } else {
-                merge_bb
-            };
-
-            // Check if pattern matches
-            let matches = self.compile_pattern_match(scrutinee_val, &arm.pattern)?;
-
-            self.builder
-                .build_conditional_branch(matches, arm_body_bb, next_check_bb)
-                .map_err(|e| format!("Failed to build conditional branch: {:?}", e))?;
-
-            // Compile arm body
-            self.builder.position_at_end(arm_body_bb);
-            self.compile_block(&arm.body)?;
-            
-            // Jump to merge if no terminator
-            if self
-                .builder
-                .get_insert_block()
-                .unwrap()
-                .get_terminator()
-                .is_none()
-            {
-                self.builder
-                    .build_unconditional_branch(merge_bb)
-                    .map_err(|e| format!("Failed to build branch: {:?}", e))?;
-            }
-
-            // Position for next check
-            if !is_last {
-                self.builder.position_at_end(next_check_bb);
-            }
-        }
-
-        self.builder.position_at_end(merge_bb);
-        Ok(())
-    }
-
-    fn compile_pattern_match(
-        &mut self,
-        scrutinee_val: BasicValueEnum<'ctx>,
-        pattern: &Pattern,
-    ) -> Result<inkwell::values::IntValue<'ctx>, String> {
-        match pattern {
-            Pattern::Literal(lit) => {
-                let pattern_val = self.compile_literal(lit)?;
-                
-                // Compare scrutinee with pattern value
-                match (scrutinee_val, pattern_val) {
-                    (BasicValueEnum::IntValue(scrutinee_int), BasicValueEnum::IntValue(pattern_int)) => {
-                        self.builder
-                            .build_int_compare(IntPredicate::EQ, scrutinee_int, pattern_int, "match.cmp")
-                            .map_err(|e| format!("Failed to compare integers: {:?}", e))
-                    }
-                    (BasicValueEnum::FloatValue(scrutinee_float), BasicValueEnum::FloatValue(pattern_float)) => {
-                        self.builder
-                            .build_float_compare(FloatPredicate::OEQ, scrutinee_float, pattern_float, "match.cmp")
-                            .map_err(|e| format!("Failed to compare floats: {:?}", e))
-                    }
-                    _ => Err("Type mismatch in pattern matching".to_string()),
-                }
-            }
-            Pattern::Identifier(_) => {
-                // Wildcard pattern - always matches
-                Ok(self.context.bool_type().const_int(1, false))
-            }
-            Pattern::EnumVariant(enum_name, variant_name) => {
-                // Get enum info
-                let enum_info = self.enums.get(enum_name).ok_or_else(|| {
-                    format!("Enum '{}' not found", enum_name)
-                })?;
-
-                // Find variant index
-                let variant_idx = enum_info
-                    .variants
-                    .iter()
-                    .position(|(name, _)| name == variant_name)
-                    .ok_or_else(|| {
-                        format!("Variant '{}' not found in enum '{}'", variant_name, enum_name)
-                    })?;
-
-                // Extract discriminant from enum value
-                // The discriminant is an IntValue but extract_enum_discriminant returns BasicValueEnum
-                // for consistency with other extract methods
-                let discriminant = self.extract_enum_discriminant(scrutinee_val)?;
-                let tag_val = discriminant.into_int_value();
-
-                let expected_tag = self.context.i32_type().const_int(variant_idx as u64, false);
-                
-                self.builder
-                    .build_int_compare(IntPredicate::EQ, tag_val, expected_tag, "match.enum.cmp")
-                    .map_err(|e| format!("Failed to compare enum tags: {:?}", e))
-            }
-        }
     }
 
     // Helper method to extract range bounds from iterator expression
