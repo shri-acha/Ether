@@ -19,6 +19,7 @@ pub enum TokenType {
     False,
     Struct,
     Enum,
+    Match,
 
     // Type keywords
     Int,
@@ -268,6 +269,7 @@ impl Tokenizer {
             "false" => TokenType::False,
             "enum" => TokenType::Enum,
             "struct" => TokenType::Struct,
+            "match" => TokenType::Match,
             "int" => TokenType::Int,
             "float" => TokenType::Float,
             "bool" => TokenType::Bool,
