@@ -89,6 +89,23 @@ pub enum Stmt {
         iter: Expr,
         body: Block,
     },
+    Match {
+        scrutinee: Box<Expr>,
+        arms: Vec<MatchArm>,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub body: Block,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum Pattern {
+    Literal(Literal),
+    Identifier(String),     // wildcard pattern (e.g., _ or any name) - no variable capture yet
+    EnumVariant(String, String), // enum_name, variant_name
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -457,6 +474,7 @@ impl Parser {
             TokenType::If => self.parse_if_stmt(),
             TokenType::While => self.parse_while_stmt(),
             TokenType::For => self.parse_for_stmt(),
+            TokenType::Match => self.parse_match_stmt(),
             TokenType::LBrace => Ok(Stmt::Block(self.parse_block()?)),
             _ => self.parse_expr_stmt(),
         }
@@ -537,6 +555,76 @@ impl Parser {
         self.expect(TokenType::RParen)?;
         let body = self.parse_block()?;
         Ok(Stmt::For { name, iter, body })
+    }
+
+    fn parse_match_stmt(&mut self) -> EtherResult<Stmt> {
+        self.expect(TokenType::Match)?;
+        self.expect(TokenType::LParen)?;
+        let scrutinee = Box::new(self.parse_expr()?);
+        self.expect(TokenType::RParen)?;
+        self.expect(TokenType::LBrace)?;
+
+        let mut arms = Vec::new();
+        while !self.check(&TokenType::RBrace) {
+            arms.push(self.parse_match_arm()?);
+        }
+
+        self.expect(TokenType::RBrace)?;
+        Ok(Stmt::Match { scrutinee, arms })
+    }
+
+    fn parse_match_arm(&mut self) -> EtherResult<MatchArm> {
+        let pattern = self.parse_pattern()?;
+        self.expect(TokenType::Arrow)?;
+        let body = self.parse_block()?;
+        Ok(MatchArm { pattern, body })
+    }
+
+    fn parse_pattern(&mut self) -> EtherResult<Pattern> {
+        match self.peek()? {
+            TokenType::Number(n) => {
+                let n = n.clone();
+                self.advance()?;
+                Ok(Pattern::Literal(Literal::Int(n)))
+            }
+            TokenType::FloatLit(f) => {
+                let f = f.clone();
+                self.advance()?;
+                Ok(Pattern::Literal(Literal::Float(f)))
+            }
+            TokenType::True => {
+                self.advance()?;
+                Ok(Pattern::Literal(Literal::Bool(true)))
+            }
+            TokenType::False => {
+                self.advance()?;
+                Ok(Pattern::Literal(Literal::Bool(false)))
+            }
+            TokenType::StringLit(s) => {
+                let s = s.clone();
+                self.advance()?;
+                Ok(Pattern::Literal(Literal::String(s)))
+            }
+            TokenType::CharLit(c) => {
+                let c = *c;
+                self.advance()?;
+                Ok(Pattern::Literal(Literal::Char(c)))
+            }
+            TokenType::Identifier(name) => {
+                let name = name.clone();
+                self.advance()?;
+                
+                // Check if it's an enum variant (Name::Variant)
+                if self.consume(TokenType::DoubleColon) {
+                    let variant = self.expect_identifier()?;
+                    Ok(Pattern::EnumVariant(name, variant))
+                } else {
+                    // It's a wildcard or identifier
+                    Ok(Pattern::Identifier(name))
+                }
+            }
+            _ => Err(self.error("Expected pattern")),
+        }
     }
 
     // ========== Expression Parsing (Precedence Climbing) ==========
