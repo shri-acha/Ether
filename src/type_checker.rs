@@ -458,51 +458,6 @@ impl TypeChecker {
 
                 Ok(current_subst)
             }
-
-            crate::parser::Stmt::Match { scrutinee, arms } => {
-                if arms.is_empty() {
-                    return Err("Match statement must have at least one arm".to_string());
-                }
-
-                // Infer the type of the scrutinee
-                let (scrutinee_ty, s1) = self.infer_expr(scrutinee, subst)?;
-                let mut current_subst = s1;
-
-                // Check each arm
-                for arm in arms {
-                    // Check that the pattern matches the scrutinee type
-                    let pattern_ty = self.infer_pattern(&arm.pattern)?;
-                    let s2 = unify(&scrutinee_ty, &pattern_ty)?;
-                    current_subst = compose_subst(&current_subst, &s2);
-
-                    // Check the arm body
-                    let s3 = self.check_block(&arm.body, &current_subst, ret_ty)?;
-                    current_subst = compose_subst(&current_subst, &s3);
-                }
-
-                Ok(current_subst)
-            }
-        }
-    }
-
-    /// Infer the type of a pattern
-    /// 
-    /// Returns the inferred type for the pattern:
-    /// - Literal patterns: returns the concrete type of the literal (Int, Float, Bool, etc.)
-    /// - Identifier patterns (wildcards): returns a fresh type variable that can unify with any type
-    /// - EnumVariant patterns: returns the custom type for the enum
-    fn infer_pattern(&mut self, pattern: &crate::parser::Pattern) -> Result<InferredType, String> {
-        match pattern {
-            crate::parser::Pattern::Literal(lit) => Ok(self.infer_literal(lit)),
-            crate::parser::Pattern::Identifier(_) => {
-                // Wildcard pattern can match any type
-                // Return a fresh type variable that can unify with anything
-                Ok(InferredType::Var(self.var_gen.fresh()))
-            }
-            crate::parser::Pattern::EnumVariant(enum_name, _variant_name) => {
-                // Return the enum type
-                Ok(InferredType::Custom(enum_name.clone()))
-            }
         }
     }
 }
