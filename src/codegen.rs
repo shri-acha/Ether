@@ -935,6 +935,8 @@ impl<'ctx> CodeGen<'ctx> {
                     })?;
 
                 // Extract discriminant from enum value
+                // The discriminant is an IntValue but extract_enum_discriminant returns BasicValueEnum
+                // for consistency with other extract methods
                 let discriminant = self.extract_enum_discriminant(scrutinee_val)?;
                 let tag_val = discriminant.into_int_value();
 

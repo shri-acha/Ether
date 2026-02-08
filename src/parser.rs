@@ -104,7 +104,7 @@ pub struct MatchArm {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Pattern {
     Literal(Literal),
-    Identifier(String),     // wildcard or variable binding
+    Identifier(String),     // wildcard pattern (e.g., _ or any name) - no variable capture yet
     EnumVariant(String, String), // enum_name, variant_name
 }
 

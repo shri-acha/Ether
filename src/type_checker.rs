@@ -486,6 +486,11 @@ impl TypeChecker {
     }
 
     /// Infer the type of a pattern
+    /// 
+    /// Returns the inferred type for the pattern:
+    /// - Literal patterns: returns the concrete type of the literal (Int, Float, Bool, etc.)
+    /// - Identifier patterns (wildcards): returns a fresh type variable that can unify with any type
+    /// - EnumVariant patterns: returns the custom type for the enum
     fn infer_pattern(&mut self, pattern: &crate::parser::Pattern) -> Result<InferredType, String> {
         match pattern {
             crate::parser::Pattern::Literal(lit) => Ok(self.infer_literal(lit)),
