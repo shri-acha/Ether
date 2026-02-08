@@ -486,14 +486,13 @@ impl TypeChecker {
     }
 
     /// Infer the type of a pattern
-    fn infer_pattern(&self, pattern: &crate::parser::Pattern) -> Result<InferredType, String> {
+    fn infer_pattern(&mut self, pattern: &crate::parser::Pattern) -> Result<InferredType, String> {
         match pattern {
             crate::parser::Pattern::Literal(lit) => Ok(self.infer_literal(lit)),
             crate::parser::Pattern::Identifier(_) => {
                 // Wildcard pattern can match any type
-                // We return a fresh type variable that can unify with anything
-                // For simplicity, we'll just return Void since wildcards don't constrain the type
-                Ok(InferredType::Void)
+                // Return a fresh type variable that can unify with anything
+                Ok(InferredType::Var(self.var_gen.fresh()))
             }
             crate::parser::Pattern::EnumVariant(enum_name, _variant_name) => {
                 // Return the enum type
