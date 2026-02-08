@@ -934,18 +934,9 @@ impl<'ctx> CodeGen<'ctx> {
                         format!("Variant '{}' not found in enum '{}'", variant_name, enum_name)
                     })?;
 
-                // Extract tag from enum value (scrutinee should be a struct with tag as first field)
-                let scrutinee_struct = scrutinee_val.into_struct_value();
-                let tag_ptr = self
-                    .builder
-                    .build_struct_gep(enum_info.enum_type, scrutinee_struct.as_instruction_value().unwrap().as_any_value_enum().into_pointer_value(), 0, "tag_ptr")
-                    .map_err(|e| format!("Failed to get tag pointer: {:?}", e))?;
-                
-                let tag_val = self
-                    .builder
-                    .build_load(self.context.i32_type(), tag_ptr, "tag")
-                    .map_err(|e| format!("Failed to load tag: {:?}", e))?
-                    .into_int_value();
+                // Extract discriminant from enum value
+                let discriminant = self.extract_enum_discriminant(scrutinee_val)?;
+                let tag_val = discriminant.into_int_value();
 
                 let expected_tag = self.context.i32_type().const_int(variant_idx as u64, false);
                 
