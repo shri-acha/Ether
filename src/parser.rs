@@ -103,6 +103,25 @@ pub enum Expr {
     Function(Function),
     Index(Box<Expr>, Box<Expr>),
     EnumVariant(String, String), // enum_name, variant_name
+    Match {
+        expr: Box<Expr>,
+        arms: Vec<MatchArm>,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub body: Expr,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum Pattern {
+    Wildcard,                          // _
+    Literal(Literal),                  // 42, true, "hello"
+    Identifier(String),                // x (binding)
+    EnumVariant(String, Option<Box<Pattern>>), // Option::Some(x) or Status::Ok
+    Tuple(Vec<Pattern>),               // (x, y, z)
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -542,10 +561,10 @@ impl Parser {
     // ========== Expression Parsing (Precedence Climbing) ==========
 
     pub fn parse_expr(&mut self) -> EtherResult<Expr> {
-        if self.is_function_definition() {
-            Ok(Expr::Function(self.parse_function(None)?))
-        } else {
-            self.parse_assignment()
+        match self.peek()? {
+            TokenType::Match => self.parse_match_expr(),
+            _ if self.is_function_definition() => Ok(Expr::Function(self.parse_function(None)?)),
+            _ => self.parse_assignment(),
         }
     }
 
@@ -751,5 +770,116 @@ impl Parser {
         let expr = self.parse_expr()?;
         self.expect(TokenType::RParen)?;
         Ok(expr)
+    }
+
+    // ========== Match Expression Parsing ==========
+
+    fn parse_match_expr(&mut self) -> EtherResult<Expr> {
+        self.expect(TokenType::Match)?;
+        
+        // Parse the matched expression
+        let expr = Box::new(self.parse_assignment()?);
+        
+        self.expect(TokenType::LBrace)?;
+        
+        let mut arms = Vec::new();
+        
+        // Parse match arms
+        while !self.check(&TokenType::RBrace) {
+            arms.push(self.parse_match_arm()?);
+            
+            // Optional trailing comma
+            self.consume(TokenType::Comma);
+        }
+        
+        self.expect(TokenType::RBrace)?;
+        
+        Ok(Expr::Match { expr, arms })
+    }
+
+    fn parse_match_arm(&mut self) -> EtherResult<MatchArm> {
+        let pattern = self.parse_pattern()?;
+        
+        self.expect(TokenType::FatArrow)?;
+        
+        let body = self.parse_assignment()?;
+        
+        Ok(MatchArm { pattern, body })
+    }
+
+    fn parse_pattern(&mut self) -> EtherResult<Pattern> {
+        match self.peek()? {
+            TokenType::Underscore => {
+                self.advance()?;
+                Ok(Pattern::Wildcard)
+            }
+            TokenType::Number(n) => {
+                self.advance()?;
+                Ok(Pattern::Literal(Literal::Int(n)))
+            }
+            TokenType::FloatLit(f) => {
+                self.advance()?;
+                Ok(Pattern::Literal(Literal::Float(f)))
+            }
+            TokenType::StringLit(s) => {
+                self.advance()?;
+                Ok(Pattern::Literal(Literal::String(s)))
+            }
+            TokenType::CharLit(c) => {
+                self.advance()?;
+                Ok(Pattern::Literal(Literal::Char(c)))
+            }
+            TokenType::True => {
+                self.advance()?;
+                Ok(Pattern::Literal(Literal::Bool(true)))
+            }
+            TokenType::False => {
+                self.advance()?;
+                Ok(Pattern::Literal(Literal::Bool(false)))
+            }
+            TokenType::Identifier(name) => {
+                let id = name.clone();
+                self.advance()?;
+                
+                // Check for enum variant pattern
+                if self.consume(TokenType::DoubleColon) {
+                    let variant = self.expect_identifier()?;
+                    
+                    // Check for variant with data: EnumName::Variant(pattern)
+                    let inner_pattern = if self.consume(TokenType::LParen) {
+                        let pat = self.parse_pattern()?;
+                        self.expect(TokenType::RParen)?;
+                        Some(Box::new(pat))
+                    } else {
+                        None
+                    };
+                    
+                    Ok(Pattern::EnumVariant(
+                        format!("{}::{}", id, variant),
+                        inner_pattern,
+                    ))
+                } else {
+                    // Just a binding identifier
+                    Ok(Pattern::Identifier(id))
+                }
+            }
+            TokenType::LParen => {
+                self.advance()?;
+                let mut patterns = Vec::new();
+                
+                if !self.check(&TokenType::RParen) {
+                    loop {
+                        patterns.push(self.parse_pattern()?);
+                        if !self.consume(TokenType::Comma) {
+                            break;
+                        }
+                    }
+                }
+                
+                self.expect(TokenType::RParen)?;
+                Ok(Pattern::Tuple(patterns))
+            }
+            token => Err(self.error(format!("Invalid pattern: {:?}", token))),
+        }
     }
 }

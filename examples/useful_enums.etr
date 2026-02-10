@@ -16,7 +16,7 @@ struct Length {
 enum FaceShape{
   Circle: Radius,
   Oval: Params,
-  Square: Lenght
+  Square: Length
 }
 
 // this is useful as faceshape is now a generic being able to be any of the types
@@ -28,5 +28,5 @@ struct Person{
 }
 
 fn main(): void {
-  let person_1 = Person{ age:1, face_shape: FaceShape::Circle(3) };
+  let x = FaceShape::Circle(3);
 }

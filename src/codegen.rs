@@ -11,8 +11,8 @@ use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 use std::collections::HashMap;
 
 use crate::parser::{
-    BinOp, Block, Declaration, Expr, Function, FunctionHeader, Literal, Program, Stmt, StructDef,
-    Type, UnOp, VarDecl,
+    BinOp, Block, Declaration, Expr, Function, FunctionHeader, Literal, MatchArm, Pattern,
+    Program, Stmt, StructDef, Type, UnOp, VarDecl,
 };
 
 struct EnumInfo<'ctx> {
@@ -896,6 +896,7 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::EnumVariant(enum_name, variant_name) => {
                 self.compile_enum_variant(enum_name, variant_name)
             }
+            Expr::Match { expr, arms } => self.compile_match(expr, arms),
         }
     }
 
@@ -1243,6 +1244,342 @@ impl<'ctx> CodeGen<'ctx> {
         variant_name: &str,
     ) -> Result<BasicValueEnum<'ctx>, String> {
         self.create_enum_value(enum_name, variant_name, None)
+    }
+
+    // ================= MATCH EXPRESSION COMPILATION =================
+
+    fn compile_match(
+        &mut self,
+        match_expr: &Expr,
+        arms: &[MatchArm],
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        if arms.is_empty() {
+            return Err("Match expression must have at least one arm".to_string());
+        }
+
+        // Compile the matched expression
+        let match_value = self.compile_expr(match_expr)?;
+
+        // Get the parent function and create basic blocks
+        let parent_fn = self
+            .builder
+            .get_insert_block()
+            .unwrap()
+            .get_parent()
+            .unwrap();
+
+        let merge_bb = self.context.append_basic_block(parent_fn, "match.end");
+
+        // Allocate a variable to store the result of the match expression
+        // We need to determine the result type from the first arm
+        let first_arm_type = self.infer_expr_type(&arms[0].body)?;
+        let result_alloca = self
+            .builder
+            .build_alloca(first_arm_type, "match.result")
+            .map_err(|e| format!("Failed to allocate match result: {:?}", e))?;
+
+        // Save current variable state
+        let saved_vars = self.variables.clone();
+        let saved_types = self.variable_types.clone();
+
+        // Compile each arm
+        for (i, arm) in arms.iter().enumerate() {
+            let is_last = i == arms.len() - 1;
+
+            // Create basic blocks for this arm
+            let arm_check_bb = self
+                .context
+                .append_basic_block(parent_fn, &format!("match.arm{}.check", i));
+            let arm_body_bb = self
+                .context
+                .append_basic_block(parent_fn, &format!("match.arm{}.body", i));
+            let next_bb = if is_last {
+                merge_bb
+            } else {
+                self.context
+                    .append_basic_block(parent_fn, &format!("match.arm{}.next", i + 1))
+            };
+
+            // Jump to check
+            self.builder
+                .build_unconditional_branch(arm_check_bb)
+                .map_err(|e| format!("Failed to build branch: {:?}", e))?;
+
+            // === ARM CHECK ===
+            self.builder.position_at_end(arm_check_bb);
+
+            // Restore variable state before pattern matching
+            self.variables = saved_vars.clone();
+            self.variable_types = saved_types.clone();
+
+            // Check if the pattern matches
+            let matches = self.compile_pattern_check(match_value, &arm.pattern)?;
+
+            // Branch based on whether pattern matches
+            self.builder
+                .build_conditional_branch(matches.into_int_value(), arm_body_bb, next_bb)
+                .map_err(|e| format!("Failed to build conditional branch: {:?}", e))?;
+
+            // === ARM BODY ===
+            self.builder.position_at_end(arm_body_bb);
+
+            // Bind pattern variables (variables were already bound during pattern check)
+            // Compile the arm body
+            let arm_result = self.compile_expr(&arm.body)?;
+
+            // Store the result
+            self.builder
+                .build_store(result_alloca, arm_result)
+                .map_err(|e| format!("Failed to store match result: {:?}", e))?;
+
+            // Jump to merge
+            self.builder
+                .build_unconditional_branch(merge_bb)
+                .map_err(|e| format!("Failed to build branch: {:?}", e))?;
+
+            // Position at next block for the next iteration
+            if !is_last {
+                self.builder.position_at_end(next_bb);
+            }
+        }
+
+        // Restore variable state
+        self.variables = saved_vars;
+        self.variable_types = saved_types;
+
+        // === MERGE BLOCK ===
+        self.builder.position_at_end(merge_bb);
+
+        // Load and return the result
+        self.builder
+            .build_load(first_arm_type, result_alloca, "match.result.load")
+            .map_err(|e| format!("Failed to load match result: {:?}", e))
+    }
+
+    /// Check if a pattern matches a value and bind any pattern variables
+    fn compile_pattern_check(
+        &mut self,
+        value: BasicValueEnum<'ctx>,
+        pattern: &Pattern,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        match pattern {
+            Pattern::Wildcard => {
+                // Wildcard always matches
+                Ok(self.context.bool_type().const_int(1, false).into())
+            }
+
+            Pattern::Literal(lit) => {
+                // Compare value with literal
+                self.compile_literal_pattern_check(value, lit)
+            }
+
+            Pattern::Identifier(name) => {
+                // Identifier pattern binds the value to a variable
+                // Always matches, but we need to bind the variable
+                let value_type = value.get_type();
+                let alloca = self
+                    .builder
+                    .build_alloca(value_type, name)
+                    .map_err(|e| format!("Failed to allocate pattern variable: {:?}", e))?;
+
+                self.builder
+                    .build_store(alloca, value)
+                    .map_err(|e| format!("Failed to store pattern variable: {:?}", e))?;
+
+                self.variables.insert(name.clone(), alloca);
+                self.variable_types.insert(name.clone(), value_type);
+
+                // Always matches
+                Ok(self.context.bool_type().const_int(1, false).into())
+            }
+
+            Pattern::EnumVariant(variant_path, inner_pattern) => {
+                self.compile_enum_pattern_check(value, variant_path, inner_pattern.as_deref())
+            }
+
+            Pattern::Tuple(patterns) => {
+                self.compile_tuple_pattern_check(value, patterns)
+            }
+        }
+    }
+
+    fn compile_literal_pattern_check(
+        &mut self,
+        value: BasicValueEnum<'ctx>,
+        lit: &Literal,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let literal_value = self.compile_literal(lit)?;
+
+        match (value, literal_value) {
+            (BasicValueEnum::IntValue(v), BasicValueEnum::IntValue(l)) => {
+                Ok(self
+                    .builder
+                    .build_int_compare(IntPredicate::EQ, v, l, "lit.cmp")
+                    .map_err(|e| format!("Failed to compare integers: {:?}", e))?
+                    .into())
+            }
+            (BasicValueEnum::FloatValue(v), BasicValueEnum::FloatValue(l)) => {
+                Ok(self
+                    .builder
+                    .build_float_compare(FloatPredicate::OEQ, v, l, "lit.cmp")
+                    .map_err(|e| format!("Failed to compare floats: {:?}", e))?
+                    .into())
+            }
+            _ => Err("Type mismatch in literal pattern".to_string()),
+        }
+    }
+
+    fn compile_enum_pattern_check(
+        &mut self,
+        value: BasicValueEnum<'ctx>,
+        variant_path: &str,
+        inner_pattern: Option<&Pattern>,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        // Parse the variant path: "EnumName::VariantName"
+        let parts: Vec<&str> = variant_path.split("::").collect();
+        if parts.len() != 2 {
+            return Err(format!("Invalid enum variant path: {}", variant_path));
+        }
+
+        let enum_name = parts[0];
+        let variant_name = parts[1];
+
+    let (num_variants, enum_type, variants) = {
+        let enum_info = self
+            .enums
+            .get(enum_name)
+            .ok_or_else(|| format!("Unknown enum: {}", enum_name))?;
+
+        (
+            enum_info.variants.len(),
+            enum_info.enum_type,
+            enum_info.variants.clone(),
+        )
+    };
+
+        // Find variant index
+        let variant_idx = variants
+            .iter()
+            .position(|(name, _)| name == variant_name)
+            .ok_or_else(|| format!("Unknown variant: {}", variant_name))?;
+
+        // Extract discriminant from value
+        let discriminant = self.extract_enum_discriminant(value)?;
+
+        // Create expected discriminant value
+        let expected_discriminant: BasicValueEnum = if num_variants <= 256 {
+            self.context
+                .i8_type()
+                .const_int(variant_idx as u64, false)
+                .into()
+        } else if num_variants <= 65536 {
+            self.context
+                .i16_type()
+                .const_int(variant_idx as u64, false)
+                .into()
+        } else {
+            self.context
+                .i32_type()
+                .const_int(variant_idx as u64, false)
+                .into()
+        };
+
+        // Compare discriminants
+        let discriminant_matches = self
+            .builder
+            .build_int_compare(
+                IntPredicate::EQ,
+                discriminant.into_int_value(),
+                expected_discriminant.into_int_value(),
+                "enum.disc.cmp",
+            )
+            .map_err(|e| format!("Failed to compare discriminants: {:?}", e))?;
+
+        // If there's an inner pattern, we need to extract the payload and check it too
+        if let Some(inner_pat) = inner_pattern {
+            // Extract payload
+            let payload = self.extract_enum_payload(value)?;
+
+            // Check inner pattern
+            let inner_matches = self.compile_pattern_check(payload, inner_pat)?;
+
+            // Both discriminant and inner pattern must match
+            Ok(self
+                .builder
+                .build_and(
+                    discriminant_matches,
+                    inner_matches.into_int_value(),
+                    "enum.full.match",
+                )
+                .map_err(|e| format!("Failed to build and: {:?}", e))?
+                .into())
+        } else {
+            Ok(discriminant_matches.into())
+        }
+    }
+
+    fn compile_tuple_pattern_check(
+        &mut self,
+        value: BasicValueEnum<'ctx>,
+        patterns: &[Pattern],
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let struct_value = value.into_struct_value();
+
+        // Check each element of the tuple
+        let mut all_match = self.context.bool_type().const_int(1, false); // true
+
+        for (i, pattern) in patterns.iter().enumerate() {
+            // Extract the i-th element
+            let element = self
+                .builder
+                .build_extract_value(struct_value, i as u32, &format!("tuple.elem{}", i))
+                .map_err(|e| format!("Failed to extract tuple element: {:?}", e))?;
+
+            // Check if this element matches the pattern
+            let element_matches = self.compile_pattern_check(element, pattern)?;
+
+            // AND with previous matches
+            all_match = self
+                .builder
+                .build_and(all_match, element_matches.into_int_value(), "tuple.and")
+                .map_err(|e| format!("Failed to build and: {:?}", e))?;
+        }
+
+        Ok(all_match.into())
+    }
+
+    /// Infer the type of an expression (simplified version for match result type)
+    fn infer_expr_type(&self, expr: &Expr) -> Result<BasicTypeEnum<'ctx>, String> {
+        match expr {
+            Expr::Literal(lit) => match lit {
+                Literal::Int(_) => Ok(self.context.i64_type().into()),
+                Literal::Float(_) => Ok(self.context.f64_type().into()),
+                Literal::Bool(_) => Ok(self.context.bool_type().into()),
+                Literal::Char(_) => Ok(self.context.i8_type().into()),
+                Literal::String(_) => Ok(self
+                    .context
+                    .i8_type()
+                    .ptr_type(AddressSpace::default())
+                    .into()),
+            },
+            Expr::Identifier(name) => self
+                .variable_types
+                .get(name)
+                .cloned()
+                .ok_or_else(|| format!("Unknown variable type: {}", name)),
+            Expr::EnumVariant(enum_name, _) => {
+                let enum_info = self
+                    .enums
+                    .get(enum_name)
+                    .ok_or_else(|| format!("Unknown enum: {}", enum_name))?;
+                Ok(enum_info.enum_type.into())
+            }
+            _ => {
+                // For complex expressions, default to i64
+                // In a real compiler, you'd do proper type inference
+                Ok(self.context.i64_type().into())
+            }
+        }
     }
 
     //  Output

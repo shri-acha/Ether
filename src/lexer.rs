@@ -19,6 +19,8 @@ pub enum TokenType {
     False,
     Struct,
     Enum,
+    Match,
+    Underscore, // _ wildcard pattern
 
     // Type keywords
     Int,
@@ -68,6 +70,7 @@ pub enum TokenType {
     DoubleColon,
     Dot,
     Arrow,
+    FatArrow, // => for match arms
     Range, // .. operator for ranges
 
     // Special
@@ -268,6 +271,7 @@ impl Tokenizer {
             "false" => TokenType::False,
             "enum" => TokenType::Enum,
             "struct" => TokenType::Struct,
+            "match" => TokenType::Match,
             "int" => TokenType::Int,
             "float" => TokenType::Float,
             "bool" => TokenType::Bool,
@@ -437,6 +441,12 @@ impl Tokenizer {
 
             // Identifiers and keywords
             if ch.is_alphabetic() || ch == '_' {
+                // Check if it's just underscore (wildcard pattern)
+                if ch == '_' && !self.peek_char(1).map_or(false, |c| c.is_alphanumeric() || c == '_') {
+                    tokens.push(Token::new(TokenType::Underscore, start_line, start_col));
+                    self.advance();
+                    continue;
+                }
                 tokens.push(self.read_identifier());
                 continue;
             }
@@ -456,6 +466,13 @@ impl Tokenizer {
             // Two-character operators
             if ch == '=' && self.peek_char(1) == Some('=') {
                 tokens.push(Token::new(TokenType::Eq, start_line, start_col));
+                self.advance();
+                self.advance();
+                continue;
+            }
+
+            if ch == '=' && self.peek_char(1) == Some('>') {
+                tokens.push(Token::new(TokenType::FatArrow, start_line, start_col));
                 self.advance();
                 self.advance();
                 continue;

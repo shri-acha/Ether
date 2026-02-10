@@ -13,4 +13,4 @@ stdlib:
 llvm-file-compile FILE:
   llc src/tests/llvm-ir-files/{{FILE}}.ll -o {{FILE}}.o --filetype=obj --relocation-model=pic
 link-stdlib FILE:
-  gcc {{FILE}}.o -L. -l:./stdlib/ethstdlib.a -o {{FILE}} 
+  gcc {{FILE}} -L. -l:./stdlib/ethstdlib.a -o {{FILE}} 

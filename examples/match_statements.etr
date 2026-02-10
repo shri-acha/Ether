@@ -1,0 +1,13 @@
+enum FaceShape{
+  Square,
+  Circle,
+  Pentagon
+}
+
+fn main():void{
+  let f_s = FaceShape::Pentagon;
+  match f_s {
+    FaceShape::Pentagon => print("Pentagon =)"),
+    _ => print("Not Pentagon =("),
+  };
+}
