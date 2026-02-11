@@ -242,10 +242,14 @@ impl Parser {
             return false;
         }
 
-        self.find_matching_paren()
-            .and_then(|pos| self.tokens.get(pos))
-            .map(|token| token.token_type == TokenType::Colon)
-            .unwrap_or(false)
+        // Look past matching ')' to see if a block '{' or return ':' follows
+        if let Some(pos) = self.find_matching_paren() {
+            if let Some(next_token) = self.tokens.get(pos) {
+                return next_token.token_type == TokenType::LBrace || 
+                       next_token.token_type == TokenType::Colon;
+            }
+        }
+        false
     }
 
     fn find_matching_paren(&self) -> Option<usize> {
@@ -305,7 +309,20 @@ impl Parser {
             TokenType::Fn => {
                 self.advance()?;
                 let name = self.expect_identifier().ok();
-                Ok(Declaration::Function(self.parse_function(name)?))
+                
+                // If it follows with '(', it's a standard function definition
+                if self.check(&TokenType::LParen) {
+                    Ok(Declaration::Function(self.parse_function(name)?))
+                } else {
+                    // Shorthand for main: fn main: void { ... }
+                    self.expect(TokenType::Colon)?;
+                    let ret_ty = self.parse_type()?;
+                    let body = self.parse_block()?;
+                    Ok(Declaration::Function(Function {
+                        header: FunctionHeader { name, params: vec![], return_type: Box::new(ret_ty) },
+                        body,
+                    }))
+                }
             }
             TokenType::Struct => {
                 self.advance()?;
@@ -319,23 +336,26 @@ impl Parser {
                 self.advance()?;
                 Ok(Declaration::Var(self.parse_var_decl()?))
             }
-            token => Err(self.error(format!("Invalid declaration start: {:?}", token))),
+            token => Err(self.error(format!("Expected declaration, got {:?}", token))),
         }
     }
 
     // ========== Type Parsing ==========
 
     fn parse_type(&mut self) -> EtherResult<Type> {
-        match self.advance()? {
-            TokenType::Int => Ok(Type::Primitive("int".into())),
-            TokenType::Float => Ok(Type::Primitive("float".into())),
-            TokenType::Bool => Ok(Type::Primitive("bool".into())),
-            TokenType::String => Ok(Type::Primitive("string".into())),
-            TokenType::Char => Ok(Type::Primitive("char".into())),
-            TokenType::Void => Ok(Type::Primitive("void".into())),
-            TokenType::Identifier(name) => Ok(Type::Custom(name)),
-            TokenType::LBracket => self.parse_array_type(),
-            TokenType::LParen => self.parse_function_type(),
+        match self.peek()? {
+            TokenType::Int => { self.advance()?; Ok(Type::Primitive("int".into())) }
+            TokenType::Float => { self.advance()?; Ok(Type::Primitive("float".into())) }
+            TokenType::Bool => { self.advance()?; Ok(Type::Primitive("bool".into())) }
+            TokenType::String => { self.advance()?; Ok(Type::Primitive("string".into())) }
+            TokenType::Void => { self.advance()?; Ok(Type::Primitive("void".into())) }
+            TokenType::Identifier(name) => { self.advance()?; Ok(Type::Custom(name)) }
+            TokenType::LBracket => { self.advance()?; self.parse_array_type() }
+            // Detect (int): int
+            TokenType::LParen => {
+                self.advance()?; // consume '('
+                self.parse_function_type()
+            }
             token => Err(self.error(format!("Invalid type: {:?}", token))),
         }
     }
@@ -424,25 +444,29 @@ impl Parser {
     // ========== Function Parsing ==========
 
     fn parse_function(&mut self, name: Option<String>) -> EtherResult<Function> {
+        // Current pos is at '('
         self.expect(TokenType::LParen)?;
 
         let mut params = Vec::new();
         if !self.check(&TokenType::RParen) {
             loop {
-                let param_name = self.expect_identifier()?;
+                let p_name = self.expect_identifier()?;
                 self.expect(TokenType::Colon)?;
-                let param_type = self.parse_type()?;
-                params.push((Some(param_name), param_type));
+                let p_type = self.parse_type()?;
+                params.push((Some(p_name), p_type));
 
-                if !self.consume(TokenType::Comma) {
-                    break;
-                }
+                if !self.consume(TokenType::Comma) { break; }
             }
         }
-
         self.expect(TokenType::RParen)?;
-        self.expect(TokenType::Colon)?;
-        let return_type = self.parse_type()?;
+
+        // Handle the optional return type ': int'
+        let return_type = if self.consume(TokenType::Colon) {
+            self.parse_type()?
+        } else {
+            Type::Primitive("void".into())
+        };
+
         let body = self.parse_block()?;
 
         Ok(Function {
@@ -563,7 +587,10 @@ impl Parser {
     pub fn parse_expr(&mut self) -> EtherResult<Expr> {
         match self.peek()? {
             TokenType::Match => self.parse_match_expr(),
-            _ if self.is_function_definition() => Ok(Expr::Function(self.parse_function(None)?)),
+            // Check for Lambda: (): int { ... }
+            TokenType::LParen if self.is_function_definition() => {
+                Ok(Expr::Function(self.parse_function(None)?))
+            }
             _ => self.parse_assignment(),
         }
     }

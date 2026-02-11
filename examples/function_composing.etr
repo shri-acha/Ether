@@ -1,0 +1,10 @@
+fn hello(value: int): (int): int{
+  let ret_val = (value:int):int {return value+5;};
+  return ret_val;
+}
+
+fn main: void{
+  let x = hello(5);
+  let y = x(5);
+  print(y);
+}

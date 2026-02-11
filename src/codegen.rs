@@ -30,6 +30,9 @@ pub struct CodeGen<'ctx> {
     functions: HashMap<String, FunctionValue<'ctx>>,
     structs: HashMap<String, BasicTypeEnum<'ctx>>,
     enums: HashMap<String, EnumInfo<'ctx>>,
+    
+    // Lambda counter for generating unique names
+    lambda_counter: usize,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -46,6 +49,7 @@ impl<'ctx> CodeGen<'ctx> {
             functions: HashMap::new(),
             structs: HashMap::new(),
             enums: HashMap::new(),
+            lambda_counter: 0,
         }
     }
 
@@ -892,12 +896,29 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::Call(func, args) => self.compile_call(func, args),
             Expr::Field(obj, field) => self.compile_field(obj, field),
             Expr::Index(arr, idx) => self.compile_index(arr, idx),
-            Expr::Function(_) => Err("Anonymous functions not yet supported".to_string()),
+            Expr::Function(func) => self.compile_lambda(func),
             Expr::EnumVariant(enum_name, variant_name) => {
                 self.compile_enum_variant(enum_name, variant_name)
             }
             Expr::Match { expr, arms } => self.compile_match(expr, arms),
         }
+    } 
+    fn compile_lambda(&mut self, function: &Function) -> Result<BasicValueEnum<'ctx>, String> {
+        // Generate a unique name for the lambda
+        let lambda_name = format!("__lambda_{}", self.lambda_counter);
+        self.lambda_counter += 1;
+
+        // Create a function with the generated name
+        let mut lambda_func = function.clone();
+        lambda_func.header.name = Some(lambda_name.clone());
+
+        // Declare and compile the function
+        self.declare_function(&lambda_func)?;
+        self.compile_function(&lambda_func)?;
+
+        // Return a function pointer to the lambda
+        let fn_val = self.functions[&lambda_name];
+        Ok(fn_val.as_global_value().as_pointer_value().into())
     }
 
     fn compile_literal(&self, lit: &Literal) -> Result<BasicValueEnum<'ctx>, String> {
