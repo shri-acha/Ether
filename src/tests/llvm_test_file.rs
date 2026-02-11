@@ -124,7 +124,7 @@ mod llvm_tests {
     fn print_statement() {
         let test_code = r#"
         fn main(): int {
-            let _: void = print("hello from Ether!"); 
+            let x: void = print("hello from Ether!"); 
             return 0;
         }
             "#;
@@ -154,9 +154,9 @@ mod llvm_tests {
     fn read_statement() {
         let test_code = r#"
         fn main(): int {
-            let _: void = print("hello from Ether!"); 
+            let x: void = print("hello from Ether!"); 
             let input_value: string = read(); 
-            let _: void = print(input_value); 
+            let y: void = print(input_value); 
             return 0;
         }
             "#;

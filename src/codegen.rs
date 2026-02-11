@@ -19,6 +19,7 @@ struct EnumInfo<'ctx> {
     enum_type: StructType<'ctx>,
     variants: Vec<(String, Option<BasicTypeEnum<'ctx>>)>,
 }
+
 pub struct CodeGen<'ctx> {
     context: &'ctx Context,
     builder: Builder<'ctx>,
@@ -29,10 +30,13 @@ pub struct CodeGen<'ctx> {
     variable_types: HashMap<String, BasicTypeEnum<'ctx>>,
     functions: HashMap<String, FunctionValue<'ctx>>,
     structs: HashMap<String, BasicTypeEnum<'ctx>>,
+    struct_fields: HashMap<String, Vec<String>>,  // ADD THIS LINE: maps struct name -> field names in order
     enums: HashMap<String, EnumInfo<'ctx>>,
     
-    // Lambda counter for generating unique names
+    // Lambda tracking
     lambda_counter: usize,
+    lambda_functions: HashMap<String, String>,
+    lambda_signatures: HashMap<String, FunctionHeader>,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -48,12 +52,13 @@ impl<'ctx> CodeGen<'ctx> {
             variable_types: HashMap::new(),
             functions: HashMap::new(),
             structs: HashMap::new(),
+            struct_fields: HashMap::new(),  // ADD THIS LINE
             enums: HashMap::new(),
             lambda_counter: 0,
+            lambda_functions: HashMap::new(),
+            lambda_signatures: HashMap::new(),
         }
     }
-
-    //  Main Entry Point
 
     pub fn compile_program(&mut self, program: &Program) -> Result<(), String> {
         // First pass: declare all structs
@@ -79,15 +84,13 @@ impl<'ctx> CodeGen<'ctx> {
             match decl {
                 Declaration::Function(f) => self.compile_function(f)?,
                 Declaration::Var(v) => self.compile_global_var(v)?,
-                Declaration::Struct(_) => {} // Already handled
+                Declaration::Struct(_) => {}
                 Declaration::Enum(_) => {}
             }
         }
 
         Ok(())
     }
-
-    //  Type Conversion
 
     fn convert_type(&self, ty: &Type) -> Result<BasicTypeEnum<'ctx>, String> {
         match ty {
@@ -119,7 +122,7 @@ impl<'ctx> CodeGen<'ctx> {
                 }
             }
             Type::Function(_) => {
-                // Function pointers
+                // Function types are represented as pointers to functions
                 Ok(self
                     .context
                     .i8_type()
@@ -133,8 +136,6 @@ impl<'ctx> CodeGen<'ctx> {
         matches!(ty, Type::Primitive(name) if name == "void")
     }
 
-    //  Struct Handling
-
     fn declare_struct(&mut self, struct_def: &StructDef) -> Result<(), String> {
         let field_types: Result<Vec<_>, String> = struct_def
             .fields
@@ -147,20 +148,18 @@ impl<'ctx> CodeGen<'ctx> {
         self.structs
             .insert(struct_def.name.clone(), struct_type.into());
 
+        // ADDED: Store field names in order
+        let field_names: Vec<String> = struct_def
+            .fields
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect();
+        self.struct_fields
+            .insert(struct_def.name.clone(), field_names);
+
         Ok(())
     }
-    //  Enum Handling
-    //
-    // This has a bit of complications while trying to implement
-    // llvm doesn't have native support for enums/tagged unions
-    // so, we'll have to implement { discriminant , payload }
-    // so that the discrimant is encoded with number of variants
-    // and the payload is able to handle the size of the maximum variant
-    // and also the alignment of the value as aparently llvm doesn't support
-    // alignments. As cpu while fetching from memory has to align with types.
-    //
-    // works now!
-    //
+
     fn declare_enum(&mut self, enum_def: &EnumDef) -> Result<(), String> {
         let mut variants = Vec::new();
         let mut max_size = 0u64;
@@ -183,7 +182,6 @@ impl<'ctx> CodeGen<'ctx> {
 
                 variants.push((field_name.clone(), Some(basic_ty)));
             } else {
-                // Unit variant (no payload)
                 variants.push((field_name.clone(), None));
             }
         }
@@ -212,66 +210,118 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
-    fn create_enum_value(
-        &mut self,
-        enum_name: &str,
-        variant_name: &str,
-        payload_value: Option<BasicValueEnum<'ctx>>,
-    ) -> Result<BasicValueEnum<'ctx>, String> {
-        let enum_info = self
-            .enums
-            .get(enum_name)
-            .ok_or_else(|| format!("Unknown enum: {}", enum_name))?;
+fn create_enum_value(
+    &mut self,
+    enum_name: &str,
+    variant_name: &str,
+    payload_value: Option<BasicValueEnum<'ctx>>,
+) -> Result<BasicValueEnum<'ctx>, String> {
+    let enum_info = self
+        .enums
+        .get(enum_name)
+        .ok_or_else(|| format!("Unknown enum: {}", enum_name))?;
 
-        let variant_idx = enum_info
-            .variants
-            .iter()
-            .position(|(name, _)| name == variant_name)
-            .ok_or_else(|| format!("Unknown variant: {}", variant_name))?;
+    let variant_idx = enum_info
+        .variants
+        .iter()
+        .position(|(name, _)| name == variant_name)
+        .ok_or_else(|| format!("Unknown variant: {}", variant_name))?;
 
-        let num_variants = enum_info.variants.len();
-        let discriminant_val: BasicValueEnum = if num_variants <= 256 {
-            self.context
-                .i8_type()
-                .const_int(variant_idx as u64, false)
-                .into()
-        } else if num_variants <= 65536 {
-            self.context
-                .i16_type()
-                .const_int(variant_idx as u64, false)
-                .into()
-        } else {
-            self.context
-                .i64_type()
-                .const_int(variant_idx as u64, false)
-                .into()
-        };
+    let (_, variant_payload_type) = &enum_info.variants[variant_idx];
 
-        let enum_type = enum_info.enum_type;
-        let payload_field_type = enum_type
-            .get_field_type_at_index(1)
-            .ok_or("Invalid enum structure")?;
-
-        let payload_val = if let Some(val) = payload_value {
-            val
-        } else {
-            self.get_default_value(payload_field_type)
-        };
-
-        let mut struct_val = enum_type.get_undef();
-        struct_val = self
-            .builder
-            .build_insert_value(struct_val, discriminant_val, 0, "with_discriminant")
-            .map_err(|e| format!("Failed to insert discriminant: {:?}", e))?
-            .into_struct_value();
-        struct_val = self
-            .builder
-            .build_insert_value(struct_val, payload_val, 1, "with_payload")
-            .map_err(|e| format!("Failed to insert payload: {:?}", e))?
-            .into_struct_value();
-
-        Ok(struct_val.into())
+    // Validate payload against variant requirements
+    match (variant_payload_type, &payload_value) {
+        (Some(_), None) => {
+            return Err(format!(
+                "Enum variant {}::{} requires a payload",
+                enum_name, variant_name
+            ));
+        }
+        (None, Some(_)) => {
+            return Err(format!(
+                "Enum variant {}::{} does not accept a payload",
+                enum_name, variant_name
+            ));
+        }
+        _ => {} // Both Some or both None - acceptable
     }
+
+    let num_variants = enum_info.variants.len();
+    let discriminant_val: BasicValueEnum = if num_variants <= 256 {
+        self.context
+            .i8_type()
+            .const_int(variant_idx as u64, false)
+            .into()
+    } else if num_variants <= 65516 {
+        self.context
+            .i16_type()
+            .const_int(variant_idx as u64, false)
+            .into()
+    } else {
+        self.context
+            .i32_type()
+            .const_int(variant_idx as u64, false)
+            .into()
+    };
+
+    let enum_type = enum_info.enum_type;
+    let payload_field_type = enum_type
+        .get_field_type_at_index(1)
+        .ok_or("Invalid enum structure")?;
+
+    // Handle payload value with proper type conversion if needed
+    let payload_val = if let Some(val) = payload_value {
+        // If types don't match exactly, try to bitcast/convert
+        if val.get_type() != payload_field_type {
+            // Check if we need to bitcast (for type-erased storage)
+            match (val, payload_field_type) {
+                (BasicValueEnum::IntValue(int_val), BasicTypeEnum::IntType(target_int_type)) => {
+                    // Convert between different int sizes
+                    if int_val.get_type().get_bit_width() < target_int_type.get_bit_width() {
+                        self.builder
+                            .build_int_z_extend(int_val, target_int_type, "payload_ext")
+                            .map_err(|e| format!("Failed to extend int: {:?}", e))?
+                            .into()
+                    } else if int_val.get_type().get_bit_width() > target_int_type.get_bit_width() {
+                        self.builder
+                            .build_int_truncate(int_val, target_int_type, "payload_trunc")
+                            .map_err(|e| format!("Failed to truncate int: {:?}", e))?
+                            .into()
+                    } else {
+                        val
+                    }
+                }
+                (BasicValueEnum::StructValue(_), BasicTypeEnum::StructType(_)) => {
+                    // Structs can be stored directly if sizes match
+                    val
+                }
+                _ => {
+                    // For other types, store as-is and let LLVM handle it
+                    // This works because we use the largest payload size
+                    val
+                }
+            }
+        } else {
+            val
+        }
+    } else {
+        self.get_default_value(payload_field_type)
+    };
+
+    let mut struct_val = enum_type.get_undef();
+    struct_val = self
+        .builder
+        .build_insert_value(struct_val, discriminant_val, 0, "with_discriminant")
+        .map_err(|e| format!("Failed to insert discriminant: {:?}", e))?
+        .into_struct_value();
+    struct_val = self
+        .builder
+        .build_insert_value(struct_val, payload_val, 1, "with_payload")
+        .map_err(|e| format!("Failed to insert payload: {:?}", e))?
+        .into_struct_value();
+
+    Ok(struct_val.into())
+}
 
     fn extract_enum_discriminant(
         &mut self,
@@ -292,8 +342,6 @@ impl<'ctx> CodeGen<'ctx> {
             .build_extract_value(struct_val, 1, "payload")
             .map_err(|e| format!("Failed to extract payload: {:?}", e))
     }
-
-    //  Function Handling
 
     fn declare_function(&mut self, function: &Function) -> Result<FunctionValue<'ctx>, String> {
         let name = function
@@ -356,10 +404,11 @@ impl<'ctx> CodeGen<'ctx> {
         // Create a new scope for function variables
         let prev_vars = self.variables.clone();
         let prev_types = self.variable_types.clone();
+        
         self.variables.clear();
         self.variable_types.clear();
 
-        // Allocate parameters
+        // Allocate regular parameters
         for (i, (param_name, param_ty)) in function.header.params.iter().enumerate() {
             if let Some(name) = param_name {
                 let param_val = fn_val
@@ -397,7 +446,6 @@ impl<'ctx> CodeGen<'ctx> {
                     .build_return(None)
                     .map_err(|e| format!("Failed to build return: {:?}", e))?;
             } else {
-                // Return default value
                 let ret_ty = self.convert_type(&function.header.return_type)?;
                 let zero = self.get_default_value(ret_ty);
                 self.builder
@@ -423,31 +471,24 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
-    // ================= Runtime Linked Functions =================
-
     fn declare_runtime_linked_functions(&mut self) {
         let i8_type = self.context.i8_type();
         let i64_type = self.context.i64_type();
         let i8_ptr_type = i8_type.ptr_type(AddressSpace::default());
         let void_type = self.context.void_type();
 
-        // Declare __Eth_print_str
         let print_fn_str_type = void_type.fn_type(&[i8_ptr_type.into()], false);
         self.module
             .add_function("__Eth_print_str", print_fn_str_type, None);
 
-        // Declare __Eth_print_i64
         let print_fn_i64_type = void_type.fn_type(&[i64_type.into()], false);
         self.module
             .add_function("__Eth_print_i64", print_fn_i64_type, None);
 
-        // Declare __Eth_read
         let read_fn_type = i8_ptr_type.fn_type(&[], false);
         self.module
             .add_function("__Eth_read", read_fn_type, Some(Linkage::External));
     }
-
-    // ================= Global Variables =================
 
     fn compile_global_var(&mut self, var: &VarDecl) -> Result<(), String> {
         let value = self.compile_expr(&var.value)?;
@@ -459,13 +500,10 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
-    //  Block & Statements
-
     fn compile_block(&mut self, block: &Block) -> Result<(), String> {
         for stmt in &block.statements {
             self.compile_stmt(stmt)?;
 
-            // Stop if block is terminated
             if self
                 .builder
                 .get_insert_block()
@@ -499,6 +537,45 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn compile_var_decl(&mut self, var: &VarDecl) -> Result<(), String> {
+        // If the value is a lambda, compile it and track the assignment
+        if let Expr::Function(func) = &var.value {
+            // Generate unique name for the lambda
+            let lambda_name = format!("__lambda_{}", self.lambda_counter);
+            self.lambda_counter += 1;
+
+            // Create a function with the generated name
+            let mut lambda_func = func.clone();
+            lambda_func.header.name = Some(lambda_name.clone());
+
+            // Store the signature
+            self.lambda_signatures.insert(lambda_name.clone(), func.header.clone());
+
+            // Declare and compile the function
+            self.declare_function(&lambda_func)?;
+            self.compile_function(&lambda_func)?;
+
+            // Track that this variable holds this lambda
+            self.lambda_functions.insert(var.name.clone(), lambda_name);
+            
+            // Create a dummy variable to maintain compatibility with rest of system
+            // (the actual function is tracked in lambda_functions)
+            let ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
+            let dummy_ptr = ptr_type.const_null();
+            let alloca = self
+                .builder
+                .build_alloca(ptr_type.as_basic_type_enum(), &var.name)
+                .map_err(|e| format!("Failed to allocate lambda variable: {:?}", e))?;
+            self.builder
+                .build_store(alloca, dummy_ptr)
+                .map_err(|e| format!("Failed to store lambda variable: {:?}", e))?;
+
+            self.variables.insert(var.name.clone(), alloca);
+            self.variable_types.insert(var.name.clone(), ptr_type.as_basic_type_enum());
+            
+            return Ok(());
+        }
+
+        // For non-lambda variables, use the normal path
         let value = self.compile_expr(&var.value)?;
 
         let ty = if let Some(ref var_ty) = var.ty {
@@ -559,7 +636,6 @@ impl<'ctx> CodeGen<'ctx> {
             .build_conditional_branch(cond_val, then_bb, else_bb)
             .map_err(|e| format!("Failed to build conditional branch: {:?}", e))?;
 
-        // Then block
         self.builder.position_at_end(then_bb);
         self.compile_block(then_block)?;
         if self
@@ -574,7 +650,6 @@ impl<'ctx> CodeGen<'ctx> {
                 .map_err(|e| format!("Failed to build branch: {:?}", e))?;
         }
 
-        // Else block
         self.builder.position_at_end(else_bb);
         if let Some(eb) = else_block {
             self.compile_block(eb)?;
@@ -611,14 +686,12 @@ impl<'ctx> CodeGen<'ctx> {
             .build_unconditional_branch(cond_bb)
             .map_err(|e| format!("Failed to build branch: {:?}", e))?;
 
-        // Condition
         self.builder.position_at_end(cond_bb);
         let cond_val = self.compile_expr(cond)?.into_int_value();
         self.builder
             .build_conditional_branch(cond_val, body_bb, end_bb)
             .map_err(|e| format!("Failed to build conditional branch: {:?}", e))?;
 
-        // Body
         self.builder.position_at_end(body_bb);
         self.compile_block(body)?;
         if self
@@ -638,9 +711,6 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn compile_for(&mut self, name: &str, iter: &Expr, body: &Block) -> Result<(), String> {
-        // for (i in range_expr) { body }
-        // range_expr should evaluate to an array or range
-
         let parent_fn = self
             .builder
             .get_insert_block()
@@ -648,54 +718,30 @@ impl<'ctx> CodeGen<'ctx> {
             .get_parent()
             .unwrap();
 
-        // Create basic blocks for the loop
         let init_bb = self.context.append_basic_block(parent_fn, "for.init");
         let cond_bb = self.context.append_basic_block(parent_fn, "for.cond");
         let body_bb = self.context.append_basic_block(parent_fn, "for.body");
         let inc_bb = self.context.append_basic_block(parent_fn, "for.inc");
         let end_bb = self.context.append_basic_block(parent_fn, "for.end");
 
-        // Jump to initialization
         self.builder
             .build_unconditional_branch(init_bb)
             .map_err(|e| format!("Failed to build branch: {:?}", e))?;
 
-        // === INITIALIZATION BLOCK ===
         self.builder.position_at_end(init_bb);
 
-        // Extract range bounds directly without compiling the entire expression
-        // (compile_expr would reject the range operator)
-
-        // Determine if it's an array (pointer) iteration or a range iteration
-
-        // For now, let's implement array iteration
-        // Assume iter_value is a pointer to the start of an array
-        // We need to know the length - for this implementation,
-        // we'll assume a convention where arrays are passed with length
-
-        // Create loop counter variable
         let counter_type = self.context.i64_type();
         let counter = self
             .builder
             .build_alloca(counter_type, "for.counter")
             .map_err(|e| format!("Failed to allocate counter: {:?}", e))?;
 
-        // Initialize counter to 0
         self.builder
             .build_store(counter, counter_type.const_zero())
             .map_err(|e| format!("Failed to store counter: {:?}", e))?;
 
-        // For array iteration, we need the array length
-        // This is a simplified implementation - in a real compiler,
-        // you'd track array lengths separately or use a struct { ptr, len }
-
-        // For demonstration, let's assume we're iterating a fixed range
-        // We'll check if the iterator is actually a range expression
-        // If iter is a function call like "range(0, 10)", we handle it specially
-
         let (start_val, end_val) = self.extract_range_bounds(iter)?;
 
-        // Store the loop bounds
         let start_var = self
             .builder
             .build_alloca(counter_type, "for.start")
@@ -712,59 +758,48 @@ impl<'ctx> CodeGen<'ctx> {
             .build_store(end_var, end_val)
             .map_err(|e| format!("Failed to store end: {:?}", e))?;
 
-        // Set counter to start value
         self.builder
             .build_store(counter, start_val)
             .map_err(|e| format!("Failed to initialize counter: {:?}", e))?;
 
-        // Jump to condition check
         self.builder
             .build_unconditional_branch(cond_bb)
             .map_err(|e| format!("Failed to build branch: {:?}", e))?;
 
-        // === CONDITION BLOCK ===
         self.builder.position_at_end(cond_bb);
 
-        // Load current counter value
         let current_counter = self
             .builder
             .build_load(counter_type, counter, "counter.val")
             .map_err(|e| format!("Failed to load counter: {:?}", e))?
             .into_int_value();
 
-        // Load end value
         let end_value = self
             .builder
             .build_load(counter_type, end_var, "end.val")
             .map_err(|e| format!("Failed to load end: {:?}", e))?
             .into_int_value();
 
-        // Check if counter < end
         let cond = self
             .builder
             .build_int_compare(IntPredicate::SLT, current_counter, end_value, "for.cond")
             .map_err(|e| format!("Failed to build comparison: {:?}", e))?;
 
-        // Branch based on condition
         self.builder
             .build_conditional_branch(cond, body_bb, end_bb)
             .map_err(|e| format!("Failed to build conditional branch: {:?}", e))?;
 
-        // === BODY BLOCK ===
         self.builder.position_at_end(body_bb);
 
-        // Save current variable state
         let prev_vars = self.variables.clone();
         let prev_types = self.variable_types.clone();
 
-        // Create the loop variable and bind it to the current counter value
         let loop_var_type = counter_type.as_basic_type_enum();
         let loop_var = self
             .builder
             .build_alloca(loop_var_type, name)
             .map_err(|e| format!("Failed to allocate loop variable: {:?}", e))?;
 
-        // Load current counter and store in loop variable
         let counter_val = self
             .builder
             .build_load(counter_type, counter, "counter.load")
@@ -774,18 +809,14 @@ impl<'ctx> CodeGen<'ctx> {
             .build_store(loop_var, counter_val)
             .map_err(|e| format!("Failed to store loop variable: {:?}", e))?;
 
-        // Add loop variable to symbol table
         self.variables.insert(name.to_string(), loop_var);
         self.variable_types.insert(name.to_string(), loop_var_type);
 
-        // Compile the loop body
         self.compile_block(body)?;
 
-        // Restore variable state (remove loop variable from scope)
         self.variables = prev_vars;
         self.variable_types = prev_types;
 
-        // Jump to increment if no terminator (return/break)
         if self
             .builder
             .get_insert_block()
@@ -798,48 +829,38 @@ impl<'ctx> CodeGen<'ctx> {
                 .map_err(|e| format!("Failed to build branch: {:?}", e))?;
         }
 
-        // === INCREMENT BLOCK ===
         self.builder.position_at_end(inc_bb);
 
-        // Load counter
         let current = self
             .builder
             .build_load(counter_type, counter, "counter.inc.load")
             .map_err(|e| format!("Failed to load counter: {:?}", e))?
             .into_int_value();
 
-        // Increment by 1
         let incremented = self
             .builder
             .build_int_add(current, counter_type.const_int(1, false), "counter.inc")
             .map_err(|e| format!("Failed to increment counter: {:?}", e))?;
 
-        // Store back
         self.builder
             .build_store(counter, incremented)
             .map_err(|e| format!("Failed to store incremented counter: {:?}", e))?;
 
-        // Jump back to condition check
         self.builder
             .build_unconditional_branch(cond_bb)
             .map_err(|e| format!("Failed to build branch: {:?}", e))?;
 
-        // === END BLOCK ===
         self.builder.position_at_end(end_bb);
 
         Ok(())
     }
 
-    // Helper method to extract range bounds from iterator expression
     fn extract_range_bounds(
         &mut self,
         iter: &Expr,
     ) -> Result<(BasicValueEnum<'ctx>, BasicValueEnum<'ctx>), String> {
-        // Check if iter is a binary range operator: start..end
         if let Expr::Binary(start_expr, op, end_expr) = iter {
             if op == &BinOp::Range {
-                // Compile the bounds directly without going through compile_expr
-                // which would reject the Range operator
                 let start = match start_expr.as_ref() {
                     Expr::Literal(lit) => self.compile_literal(lit)?,
                     Expr::Identifier(name) => self.compile_identifier(name)?,
@@ -854,37 +875,8 @@ impl<'ctx> CodeGen<'ctx> {
             }
         }
 
-        // // Check if iter is a function call to "range"
-        // if let Expr::Call(func_expr, args) = iter {
-        //     if let Expr::Identifier(func_name) = func_expr.as_ref() {
-        //         if func_name == "range" {
-        //             // Handle range(start, end) or range(end)
-        //             match args.len() {
-        //                 1 => {
-        //                     // range(n) means 0..n
-        //                     let end = self.compile_expr(&args[0])?;
-        //                     let start = self.context.i64_type().const_zero().into();
-        //                     return Ok((start, end));
-        //                 }
-        //                 2 => {
-        //                     // range(start, end) means start..end
-        //                     let start = self.compile_expr(&args[0])?;
-        //                     let end = self.compile_expr(&args[1])?;
-        //                     return Ok((start, end));
-        //                 }
-        //                 _ => return Err("range() takes 1 or 2 arguments".to_string()),
-        //             }
-        //         }
-        //     }
-        // }
-
-        // If not a range call or range operator, try to treat as an array
-        // For arrays, we'd need length information
-        // This is a simplified fallback - assume it's a range 0..10
-        Err("For loop iterator must be a range (e.g., 0..10), range() call, or array (array iteration not fully implemented)".to_string())
+        Err("For loop iterator must be a range (e.g., 0..10)".to_string())
     }
-
-    //  Expressions
 
     fn compile_expr(&mut self, expr: &Expr) -> Result<BasicValueEnum<'ctx>, String> {
         match expr {
@@ -901,24 +893,18 @@ impl<'ctx> CodeGen<'ctx> {
                 self.compile_enum_variant(enum_name, variant_name)
             }
             Expr::Match { expr, arms } => self.compile_match(expr, arms),
+            Expr::StructLiteral(struct_name, fields) => { 
+                self.compile_struct_literal(struct_name, fields)
+            }
         }
-    } 
-    fn compile_lambda(&mut self, function: &Function) -> Result<BasicValueEnum<'ctx>, String> {
-        // Generate a unique name for the lambda
-        let lambda_name = format!("__lambda_{}", self.lambda_counter);
-        self.lambda_counter += 1;
-
-        // Create a function with the generated name
-        let mut lambda_func = function.clone();
-        lambda_func.header.name = Some(lambda_name.clone());
-
-        // Declare and compile the function
-        self.declare_function(&lambda_func)?;
-        self.compile_function(&lambda_func)?;
-
-        // Return a function pointer to the lambda
-        let fn_val = self.functions[&lambda_name];
-        Ok(fn_val.as_global_value().as_pointer_value().into())
+    }
+    
+    // ========== SIMPLE LAMBDA SUPPORT ==========
+    
+    fn compile_lambda(&mut self, _function: &Function) -> Result<BasicValueEnum<'ctx>, String> {
+        // Lambdas should only appear in variable declarations
+        // They are compiled and tracked there
+        Err("Lambda expressions must be assigned to variables".to_string())
     }
 
     fn compile_literal(&self, lit: &Literal) -> Result<BasicValueEnum<'ctx>, String> {
@@ -944,21 +930,16 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn compile_identifier(&mut self, name: &str) -> Result<BasicValueEnum<'ctx>, String> {
-        let ptr = self
-            .variables
-            .get(name)
-            .ok_or_else(|| format!("Undefined variable: {}", name))?;
-
-        // Get the type that was stored with this variable
-        let load_type = if let Some(alloca_type) = self.variable_types.get(name) {
-            *alloca_type
-        } else {
-            return Err(format!("Unknown type for variable: {}", name));
-        };
-
-        self.builder
-            .build_load(load_type, *ptr, name)
-            .map_err(|e| format!("Failed to load variable: {:?}", e))
+        if let Some(ptr) = self.variables.get(name) {
+            let load_type = self.variable_types.get(name)
+                .ok_or_else(|| format!("Unknown type for variable: {}", name))?;
+            
+            return self.builder
+                .build_load(*load_type, *ptr, name)
+                .map_err(|e| format!("Failed to load variable: {:?}", e));
+        }
+        
+        Err(format!("Undefined variable: {}", name))
     }
 
     fn compile_assign(
@@ -991,7 +972,6 @@ impl<'ctx> CodeGen<'ctx> {
         op: &BinOp,
         right: &Expr,
     ) -> Result<BasicValueEnum<'ctx>, String> {
-        // Range operator should only be used in for loops, not as a standalone expression
         if op == &BinOp::Range {
             return Err("Range operator (..) can only be used in for loops".to_string());
         }
@@ -1009,7 +989,6 @@ impl<'ctx> CodeGen<'ctx> {
                         .builder
                         .build_int_signed_div(l, r, "div")
                         .map(|v| v.into()),
-
                     BinOp::Eq => self
                         .builder
                         .build_int_compare(IntPredicate::EQ, l, r, "eq")
@@ -1034,23 +1013,20 @@ impl<'ctx> CodeGen<'ctx> {
                         .builder
                         .build_int_compare(IntPredicate::SGE, l, r, "ge")
                         .map(|v| v.into()),
-
                     BinOp::And => self.builder.build_and(l, r, "and").map(|v| v.into()),
                     BinOp::Or => self.builder.build_or(l, r, "or").map(|v| v.into()),
-                    BinOp::Range => unreachable!("Range should be handled above"),
+                    BinOp::Range => unreachable!(),
                 }
                 .map_err(|e| format!("Failed to build int op: {:?}", e))?;
 
                 Ok(result)
             }
-
             (BasicValueEnum::FloatValue(l), BasicValueEnum::FloatValue(r)) => {
                 let result: BasicValueEnum = match op {
                     BinOp::Add => self.builder.build_float_add(l, r, "fadd").map(|v| v.into()),
                     BinOp::Sub => self.builder.build_float_sub(l, r, "fsub").map(|v| v.into()),
                     BinOp::Mul => self.builder.build_float_mul(l, r, "fmul").map(|v| v.into()),
                     BinOp::Div => self.builder.build_float_div(l, r, "fdiv").map(|v| v.into()),
-
                     BinOp::Eq => self
                         .builder
                         .build_float_compare(FloatPredicate::OEQ, l, r, "feq")
@@ -1075,14 +1051,12 @@ impl<'ctx> CodeGen<'ctx> {
                         .builder
                         .build_float_compare(FloatPredicate::OGE, l, r, "fge")
                         .map(|v| v.into()),
-
                     _ => return Err(format!("Invalid float operation: {:?}", op)),
                 }
                 .map_err(|e| format!("Failed to build float op: {:?}", e))?;
 
                 Ok(result)
             }
-
             _ => Err("Type mismatch in binary operation".to_string()),
         }
     }
@@ -1122,47 +1096,152 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
-    fn compile_call(
+    fn compile_indirect_call(
         &mut self,
-        func_expr: &Expr,
+        var_name: &str,
         args: &[Expr],
     ) -> Result<BasicValueEnum<'ctx>, String> {
-        // Extract function name
-        let func_name = if let Expr::Identifier(name) = func_expr {
-            name
-        } else {
-            return Err("Only direct function calls supported".to_string());
-        };
+        // Check if this variable holds a lambda function
+        if let Some(lambda_name) = self.lambda_functions.get(var_name) {
+            // This is a lambda call - look up the function and call it directly
+            let function = *self
+                .functions
+                .get(lambda_name)
+                .ok_or_else(|| format!("Lambda function not found: {}", lambda_name))?;
 
-        if func_name == "print" || func_name == "__Eth_print" {
-            if args.len() != 1 {
-                return Err("print expects 1 argument".to_string());
+            let mut compiled_args = Vec::new();
+            for arg in args {
+                let val = self.compile_expr(arg)?;
+                compiled_args.push(val.into());
             }
 
-            let print_fn_str = self
-                .module
-                .get_function("__Eth_print_str")
-                .ok_or("__Eth_print variants should be declared")?;
+            let call_site = self
+                .builder
+                .build_call(function, &compiled_args, "lambda_call")
+                .map_err(|e| format!("Failed to build lambda call: {:?}", e))?;
 
-            let print_fn_i64 = self
-                .module
-                .get_function("__Eth_print_i64")
-                .ok_or("__Eth_print variants should be declared")?;
+            match call_site.try_as_basic_value() {
+                ValueKind::Basic(value) => return Ok(value),
+                ValueKind::Instruction(_) => return Err("Lambda returned void".to_string()),
+            }
+        }
 
-            let arg_val = self.compile_expr(&args[0])?;
-            match &args[0] {
-                Expr::Literal(lit) => match lit {
-                    Literal::String(_s) => {
+        // Not a lambda - this would be an indirect call through a function pointer
+        // which we don't support in the simplified version
+        Err(format!("Variable {} is not a callable lambda", var_name))
+    }
+
+fn compile_call(
+    &mut self,
+    func_expr: &Expr,
+    args: &[Expr],
+) -> Result<BasicValueEnum<'ctx>, String> {
+    // Check if this is an enum variant constructor call: EnumName::Variant(data)
+    if let Expr::EnumVariant(enum_name, variant_name) = func_expr {
+        let enum_info = self
+            .enums
+            .get(enum_name)
+            .ok_or_else(|| format!("Unknown enum: {}", enum_name))?;
+        
+        let variant_info = enum_info
+            .variants
+            .iter()
+            .find(|(name, _)| name == variant_name)
+            .ok_or_else(|| format!("Unknown variant: {}", variant_name))?;
+        
+        let (_, expected_type) = variant_info;
+        
+        match expected_type {
+            Some(_) => {
+                // Variant expects data
+                if args.len() != 1 {
+                    return Err(format!(
+                        "Enum variant {}::{} expects 1 argument, got {}",
+                        enum_name, variant_name, args.len()
+                    ));
+                }
+                let payload_value = self.compile_expr(&args[0])?;
+                return self.create_enum_value(enum_name, variant_name, Some(payload_value));
+            }
+            None => {
+                // Variant expects no data
+                if !args.is_empty() {
+                    return Err(format!(
+                        "Enum variant {}::{} expects no arguments, got {}",
+                        enum_name, variant_name, args.len()
+                    ));
+                }
+                return self.create_enum_value(enum_name, variant_name, None);
+            }
+        }
+    }
+    
+    let func_name = if let Expr::Identifier(name) = func_expr {
+        name
+    } else {
+        return Err("Only direct function calls supported".to_string());
+    };
+    
+    // Handle built-in functions (print, read)
+    if func_name == "print" || func_name == "__Eth_print" {
+        if args.len() != 1 {
+            return Err("print expects 1 argument".to_string());
+        }
+
+        let print_fn_str = self
+            .module
+            .get_function("__Eth_print_str")
+            .ok_or("__Eth_print variants should be declared")?;
+
+        let print_fn_i64 = self
+            .module
+            .get_function("__Eth_print_i64")
+            .ok_or("__Eth_print variants should be declared")?;
+
+        let arg_val = self.compile_expr(&args[0])?;
+        match &args[0] {
+            Expr::Literal(lit) => match lit {
+                Literal::String(_s) => {
+                    self.builder
+                        .build_call(print_fn_str, &[arg_val.into()], "print_call")
+                        .map_err(|e| format!("Failed to build print call: {:?}", e))?;
+
+                    let unit_type = self.context.struct_type(&[], false);
+                    return Ok(unit_type.const_zero().into());
+                }
+                Literal::Int(_s) => {
+                    self.builder
+                        .build_call(print_fn_i64, &[arg_val.into()], "print_call")
+                        .map_err(|e| format!("Failed to build print call: {:?}", e))?;
+
+                    let unit_type = self.context.struct_type(&[], false);
+                    return Ok(unit_type.const_zero().into());
+                }
+                _ => {
+                    return Err("Missing implementation for the type!".to_string());
+                }
+            },
+            Expr::Identifier(identifier_name) => {
+                let _variable_value = self
+                    .variables
+                    .get(identifier_name)
+                    .ok_or(format!("Failed to find corresponding variable"))?;
+                let variable_type = self
+                    .variable_types
+                    .get(identifier_name)
+                    .ok_or(format!("Failed to find value assigned to the variable"))?;
+                match variable_type {
+                    BasicTypeEnum::IntType(_) => {
                         self.builder
-                            .build_call(print_fn_str, &[arg_val.into()], "print_call")
+                            .build_call(print_fn_i64, &[arg_val.into()], "print_call")
                             .map_err(|e| format!("Failed to build print call: {:?}", e))?;
 
                         let unit_type = self.context.struct_type(&[], false);
                         return Ok(unit_type.const_zero().into());
                     }
-                    Literal::Int(_s) => {
+                    BasicTypeEnum::PointerType(_) => {
                         self.builder
-                            .build_call(print_fn_i64, &[arg_val.into()], "print_call")
+                            .build_call(print_fn_str, &[arg_val.into()], "print_call")
                             .map_err(|e| format!("Failed to build print call: {:?}", e))?;
 
                         let unit_type = self.context.struct_type(&[], false);
@@ -1171,89 +1250,95 @@ impl<'ctx> CodeGen<'ctx> {
                     _ => {
                         return Err("Missing implementation for the type!".to_string());
                     }
-                },
-                Expr::Identifier(identifier_name) => {
-                    let _variable_value = self
-                        .variables
-                        .get(identifier_name)
-                        .ok_or(format!("Failed to find correspoding variable"))?;
-                    let variable_type = self
-                        .variable_types
-                        .get(identifier_name)
-                        .ok_or(format!("Failed to any value assigned to the variable"))?;
-                    match variable_type {
-                        BasicTypeEnum::IntType(_) => {
-                            self.builder
-                                .build_call(print_fn_i64, &[arg_val.into()], "print_call")
-                                .map_err(|e| format!("Failed to build print call: {:?}", e))?;
-
-                            let unit_type = self.context.struct_type(&[], false);
-                            return Ok(unit_type.const_zero().into());
-                        }
-                        BasicTypeEnum::PointerType(_) => {
-                            self.builder
-                                .build_call(print_fn_str, &[arg_val.into()], "print_call")
-                                .map_err(|e| format!("Failed to build print call: {:?}", e))?;
-
-                            let unit_type = self.context.struct_type(&[], false);
-                            return Ok(unit_type.const_zero().into());
-                        }
-                        _ => {
-                            return Err("Missing implementation for the type!".to_string());
-                        }
-                    }
-                }
-                _ => {
-                    return Err("Missing implementation for the type!".to_string());
                 }
             }
-        }
-
-        if func_name == "read" || func_name == "__Eth_read" {
-            let read_fn = self
-                .module
-                .get_function("__Eth_read")
-                .ok_or("__Eth_read should be declared")?;
-
-            let call_site = self
-                .builder
-                .build_call(read_fn, &[], "read_call")
-                .map_err(|e| format!("Failed to build print call: {:?}", e))?;
-
-            match call_site.try_as_basic_value() {
-                ValueKind::Basic(value) => return Ok(value),
-                ValueKind::Instruction(_) => return Err("read should return a value".to_string()),
+            _ => {
+                return Err("Missing implementation for the type!".to_string());
             }
         }
-        // Copy out the FunctionValue to avoid immutable borrow lingering
-        let function = *self
-            .functions
-            .get(func_name)
-            .ok_or_else(|| format!("Undefined function: {}", func_name))?;
+    }
 
-        // Compile all arguments
-        let mut compiled_args = Vec::new();
-        for arg in args {
-            let val = self.compile_expr(arg)?; // mutable borrow of self is fine now
-            compiled_args.push(val.into()); // convert to BasicMetadataValueEnum
-        }
+    if func_name == "read" || func_name == "__Eth_read" {
+        let read_fn = self
+            .module
+            .get_function("__Eth_read")
+            .ok_or("__Eth_read should be declared")?;
 
-        // Build the call
         let call_site = self
             .builder
-            .build_call(function, &compiled_args, "call")
-            .map_err(|e| format!("Failed to build call: {:?}", e))?;
+            .build_call(read_fn, &[], "read_call")
+            .map_err(|e| format!("Failed to build read call: {:?}", e))?;
 
-        // Match old ValueKind enum
         match call_site.try_as_basic_value() {
-            ValueKind::Basic(value) => Ok(value),
-            ValueKind::Instruction(_) => Err("Function returned void".to_string()),
+            ValueKind::Basic(value) => return Ok(value),
+            ValueKind::Instruction(_) => return Err("read should return a value".to_string()),
         }
     }
 
-    fn compile_field(&mut self, _obj: &Expr, _field: &str) -> Result<BasicValueEnum<'ctx>, String> {
-        Err("Struct field access not yet implemented".to_string())
+    // Regular function call
+    let function = *self
+        .functions
+        .get(func_name)
+        .ok_or_else(|| format!("Undefined function: {}", func_name))?;
+
+    let mut compiled_args = Vec::new();
+    for arg in args {
+        let val = self.compile_expr(arg)?;
+        compiled_args.push(val.into());
     }
+
+    let call_site = self
+        .builder
+        .build_call(function, &compiled_args, "call")
+        .map_err(|e| format!("Failed to build call: {:?}", e))?;
+
+    match call_site.try_as_basic_value() {
+        ValueKind::Basic(value) => Ok(value),
+        ValueKind::Instruction(_) => Err("Function returned void".to_string()),
+    }
+}
+
+fn compile_field(&mut self, obj: &Expr, field: &str) -> Result<BasicValueEnum<'ctx>, String> {
+    let obj_val = self.compile_expr(obj)?;
+    
+    // Get the struct value
+    let struct_val = match obj_val {
+        BasicValueEnum::StructValue(sv) => sv,
+        _ => return Err(format!("Field access requires a struct value, got {:?}", obj_val.get_type())),
+    };
+    
+    let struct_type = struct_val.get_type();
+    
+    // Find which struct this is by matching the type
+    let mut struct_name: Option<String> = None;
+    for (name, ty) in &self.structs {
+        if let BasicTypeEnum::StructType(st) = ty {
+            if st == &struct_type {
+                struct_name = Some(name.clone());
+                break;
+            }
+        }
+    }
+    
+    let struct_name = struct_name
+        .ok_or_else(|| "Could not determine struct type".to_string())?;
+    
+    // Get the field names for this struct
+    let field_names = self.struct_fields
+        .get(&struct_name)
+        .ok_or_else(|| format!("Struct {} has no field information", struct_name))?;
+    
+    // Find the index of the requested field
+    let field_index = field_names
+        .iter()
+        .position(|f| f == field)
+        .ok_or_else(|| format!("Struct {} has no field '{}'", struct_name, field))?;
+    
+    // Extract the field value using LLVM's extractvalue instruction
+    self.builder
+        .build_extract_value(struct_val, field_index as u32, field)
+        .map_err(|e| format!("Failed to extract field: {:?}", e))
+}
 
     fn compile_index(&mut self, _arr: &Expr, _idx: &Expr) -> Result<BasicValueEnum<'ctx>, String> {
         Err("Array indexing not yet implemented".to_string())
@@ -1266,8 +1351,61 @@ impl<'ctx> CodeGen<'ctx> {
     ) -> Result<BasicValueEnum<'ctx>, String> {
         self.create_enum_value(enum_name, variant_name, None)
     }
+fn compile_struct_literal(
+    &mut self,
+    struct_name: &str,
+    fields: &[(String, Expr)],
+) -> Result<BasicValueEnum<'ctx>, String> {
+    let struct_type_enum = self
+        .structs
+        .get(struct_name)
+        .ok_or_else(|| format!("Unknown struct: {}", struct_name))?
+        .clone();
 
-    // ================= MATCH EXPRESSION COMPILATION =================
+    let struct_type = match struct_type_enum {
+        BasicTypeEnum::StructType(st) => st,
+        _ => return Err(format!("{} is not a struct", struct_name)),
+    };
+
+    let field_names = self
+        .struct_fields
+        .get(struct_name)
+        .ok_or_else(|| format!("Struct {} has no field information", struct_name))?
+        .clone();
+
+    // Check that all fields are provided
+    if fields.len() != field_names.len() {
+        return Err(format!(
+            "Struct {} expects {} fields, got {}",
+            struct_name,
+            field_names.len(),
+            fields.len()
+        ));
+    }
+
+    // Create a map of provided fields for easy lookup
+    let mut provided_fields: HashMap<String, BasicValueEnum<'ctx>> = HashMap::new();
+    for (field_name, field_expr) in fields {
+        let field_value = self.compile_expr(field_expr)?;
+        provided_fields.insert(field_name.clone(), field_value);
+    }
+
+    // Build struct in field order (important for LLVM struct layout)
+    let mut struct_val = struct_type.get_undef();
+    for (idx, expected_field_name) in field_names.iter().enumerate() {
+        let field_value = provided_fields
+            .get(expected_field_name)
+            .ok_or_else(|| format!("Missing field '{}' in struct {}", expected_field_name, struct_name))?;
+
+        struct_val = self
+            .builder
+            .build_insert_value(struct_val, *field_value, idx as u32, "with_field")
+            .map_err(|e| format!("Failed to insert field: {:?}", e))?
+            .into_struct_value();
+    }
+
+    Ok(struct_val.into())
+}
 
     fn compile_match(
         &mut self,
@@ -1278,10 +1416,8 @@ impl<'ctx> CodeGen<'ctx> {
             return Err("Match expression must have at least one arm".to_string());
         }
 
-        // Compile the matched expression
         let match_value = self.compile_expr(match_expr)?;
 
-        // Get the parent function and create basic blocks
         let parent_fn = self
             .builder
             .get_insert_block()
@@ -1291,23 +1427,18 @@ impl<'ctx> CodeGen<'ctx> {
 
         let merge_bb = self.context.append_basic_block(parent_fn, "match.end");
 
-        // Allocate a variable to store the result of the match expression
-        // We need to determine the result type from the first arm
         let first_arm_type = self.infer_expr_type(&arms[0].body)?;
         let result_alloca = self
             .builder
             .build_alloca(first_arm_type, "match.result")
             .map_err(|e| format!("Failed to allocate match result: {:?}", e))?;
 
-        // Save current variable state
         let saved_vars = self.variables.clone();
         let saved_types = self.variable_types.clone();
 
-        // Compile each arm
         for (i, arm) in arms.iter().enumerate() {
             let is_last = i == arms.len() - 1;
 
-            // Create basic blocks for this arm
             let arm_check_bb = self
                 .context
                 .append_basic_block(parent_fn, &format!("match.arm{}.check", i));
@@ -1321,63 +1452,48 @@ impl<'ctx> CodeGen<'ctx> {
                     .append_basic_block(parent_fn, &format!("match.arm{}.next", i + 1))
             };
 
-            // Jump to check
             self.builder
                 .build_unconditional_branch(arm_check_bb)
                 .map_err(|e| format!("Failed to build branch: {:?}", e))?;
 
-            // === ARM CHECK ===
             self.builder.position_at_end(arm_check_bb);
 
-            // Restore variable state before pattern matching
             self.variables = saved_vars.clone();
             self.variable_types = saved_types.clone();
 
-            // Check if the pattern matches
             let matches = self.compile_pattern_check(match_value, &arm.pattern)?;
 
-            // Branch based on whether pattern matches
             self.builder
                 .build_conditional_branch(matches.into_int_value(), arm_body_bb, next_bb)
                 .map_err(|e| format!("Failed to build conditional branch: {:?}", e))?;
 
-            // === ARM BODY ===
             self.builder.position_at_end(arm_body_bb);
 
-            // Bind pattern variables (variables were already bound during pattern check)
-            // Compile the arm body
             let arm_result = self.compile_expr(&arm.body)?;
 
-            // Store the result
             self.builder
                 .build_store(result_alloca, arm_result)
                 .map_err(|e| format!("Failed to store match result: {:?}", e))?;
 
-            // Jump to merge
             self.builder
                 .build_unconditional_branch(merge_bb)
                 .map_err(|e| format!("Failed to build branch: {:?}", e))?;
 
-            // Position at next block for the next iteration
             if !is_last {
                 self.builder.position_at_end(next_bb);
             }
         }
 
-        // Restore variable state
         self.variables = saved_vars;
         self.variable_types = saved_types;
 
-        // === MERGE BLOCK ===
         self.builder.position_at_end(merge_bb);
 
-        // Load and return the result
         self.builder
             .build_load(first_arm_type, result_alloca, "match.result.load")
             .map_err(|e| format!("Failed to load match result: {:?}", e))
     }
 
-    /// Check if a pattern matches a value and bind any pattern variables
     fn compile_pattern_check(
         &mut self,
         value: BasicValueEnum<'ctx>,
@@ -1385,18 +1501,12 @@ impl<'ctx> CodeGen<'ctx> {
     ) -> Result<BasicValueEnum<'ctx>, String> {
         match pattern {
             Pattern::Wildcard => {
-                // Wildcard always matches
                 Ok(self.context.bool_type().const_int(1, false).into())
             }
-
             Pattern::Literal(lit) => {
-                // Compare value with literal
                 self.compile_literal_pattern_check(value, lit)
             }
-
             Pattern::Identifier(name) => {
-                // Identifier pattern binds the value to a variable
-                // Always matches, but we need to bind the variable
                 let value_type = value.get_type();
                 let alloca = self
                     .builder
@@ -1410,14 +1520,11 @@ impl<'ctx> CodeGen<'ctx> {
                 self.variables.insert(name.clone(), alloca);
                 self.variable_types.insert(name.clone(), value_type);
 
-                // Always matches
                 Ok(self.context.bool_type().const_int(1, false).into())
             }
-
             Pattern::EnumVariant(variant_path, inner_pattern) => {
                 self.compile_enum_pattern_check(value, variant_path, inner_pattern.as_deref())
             }
-
             Pattern::Tuple(patterns) => {
                 self.compile_tuple_pattern_check(value, patterns)
             }
@@ -1456,7 +1563,6 @@ impl<'ctx> CodeGen<'ctx> {
         variant_path: &str,
         inner_pattern: Option<&Pattern>,
     ) -> Result<BasicValueEnum<'ctx>, String> {
-        // Parse the variant path: "EnumName::VariantName"
         let parts: Vec<&str> = variant_path.split("::").collect();
         if parts.len() != 2 {
             return Err(format!("Invalid enum variant path: {}", variant_path));
@@ -1465,29 +1571,26 @@ impl<'ctx> CodeGen<'ctx> {
         let enum_name = parts[0];
         let variant_name = parts[1];
 
-    let (num_variants, enum_type, variants) = {
-        let enum_info = self
-            .enums
-            .get(enum_name)
-            .ok_or_else(|| format!("Unknown enum: {}", enum_name))?;
+        let (num_variants, _enum_type, variants) = {
+            let enum_info = self
+                .enums
+                .get(enum_name)
+                .ok_or_else(|| format!("Unknown enum: {}", enum_name))?;
 
-        (
-            enum_info.variants.len(),
-            enum_info.enum_type,
-            enum_info.variants.clone(),
-        )
-    };
+            (
+                enum_info.variants.len(),
+                enum_info.enum_type,
+                enum_info.variants.clone(),
+            )
+        };
 
-        // Find variant index
         let variant_idx = variants
             .iter()
             .position(|(name, _)| name == variant_name)
             .ok_or_else(|| format!("Unknown variant: {}", variant_name))?;
 
-        // Extract discriminant from value
         let discriminant = self.extract_enum_discriminant(value)?;
 
-        // Create expected discriminant value
         let expected_discriminant: BasicValueEnum = if num_variants <= 256 {
             self.context
                 .i8_type()
@@ -1505,7 +1608,6 @@ impl<'ctx> CodeGen<'ctx> {
                 .into()
         };
 
-        // Compare discriminants
         let discriminant_matches = self
             .builder
             .build_int_compare(
@@ -1516,15 +1618,10 @@ impl<'ctx> CodeGen<'ctx> {
             )
             .map_err(|e| format!("Failed to compare discriminants: {:?}", e))?;
 
-        // If there's an inner pattern, we need to extract the payload and check it too
         if let Some(inner_pat) = inner_pattern {
-            // Extract payload
             let payload = self.extract_enum_payload(value)?;
-
-            // Check inner pattern
             let inner_matches = self.compile_pattern_check(payload, inner_pat)?;
 
-            // Both discriminant and inner pattern must match
             Ok(self
                 .builder
                 .build_and(
@@ -1546,20 +1643,16 @@ impl<'ctx> CodeGen<'ctx> {
     ) -> Result<BasicValueEnum<'ctx>, String> {
         let struct_value = value.into_struct_value();
 
-        // Check each element of the tuple
-        let mut all_match = self.context.bool_type().const_int(1, false); // true
+        let mut all_match = self.context.bool_type().const_int(1, false);
 
         for (i, pattern) in patterns.iter().enumerate() {
-            // Extract the i-th element
             let element = self
                 .builder
                 .build_extract_value(struct_value, i as u32, &format!("tuple.elem{}", i))
                 .map_err(|e| format!("Failed to extract tuple element: {:?}", e))?;
 
-            // Check if this element matches the pattern
             let element_matches = self.compile_pattern_check(element, pattern)?;
 
-            // AND with previous matches
             all_match = self
                 .builder
                 .build_and(all_match, element_matches.into_int_value(), "tuple.and")
@@ -1569,7 +1662,6 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(all_match.into())
     }
 
-    /// Infer the type of an expression (simplified version for match result type)
     fn infer_expr_type(&self, expr: &Expr) -> Result<BasicTypeEnum<'ctx>, String> {
         match expr {
             Expr::Literal(lit) => match lit {
@@ -1596,14 +1688,10 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(enum_info.enum_type.into())
             }
             _ => {
-                // For complex expressions, default to i64
-                // In a real compiler, you'd do proper type inference
                 Ok(self.context.i64_type().into())
             }
         }
     }
-
-    //  Output
 
     pub fn get_ir(&self) -> String {
         self.module.to_string()

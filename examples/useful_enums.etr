@@ -28,5 +28,11 @@ struct Person{
 }
 
 fn main(): void {
-  let x = FaceShape::Circle(3);
+  let ar = 0;
+  let ap = Person {
+    age:18,
+    face_shape: FaceShape::Circle(Radius{ r:10 })
+    };
+  let age = ap.age;
+  print(age);
 }

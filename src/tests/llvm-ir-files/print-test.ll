@@ -12,7 +12,7 @@ declare ptr @__Eth_read()
 define i64 @main() {
 entry:
   call void @__Eth_print_str(ptr @str)
-  %_ = alloca {}, align 8
-  store {} zeroinitializer, ptr %_, align 1
+  %x = alloca {}, align 8
+  store {} zeroinitializer, ptr %x, align 1
   ret i64 0
 }

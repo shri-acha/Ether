@@ -102,11 +102,9 @@ pub enum Expr {
     Field(Box<Expr>, String),
     Function(Function),
     Index(Box<Expr>, Box<Expr>),
-    EnumVariant(String, String), // enum_name, variant_name
-    Match {
-        expr: Box<Expr>,
-        arms: Vec<MatchArm>,
-    },
+    EnumVariant(String, String),
+    Match { expr: Box<Expr>, arms: Vec<MatchArm> },
+    StructLiteral(String, Vec<(String, Expr)>),  // ADD THIS LINE: struct_name, fields
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -723,21 +721,51 @@ impl Parser {
         }
     }
 
-    fn parse_postfix(&mut self) -> EtherResult<Expr> {
-        let mut expr = self.parse_primary()?;
+fn parse_postfix(&mut self) -> EtherResult<Expr> {
+    let mut expr = self.parse_primary()?;
 
-        loop {
-            expr = match self.peek()? {
-                TokenType::DoubleColon => self.parse_enum_variant(expr)?,
-                TokenType::LParen => self.parse_call(expr)?,
-                TokenType::Dot => self.parse_field_access(expr)?,
-                TokenType::LBracket => self.parse_index(expr)?,
-                _ => break,
-            };
-        }
-
-        Ok(expr)
+    loop {
+        expr = match self.peek()? {
+            TokenType::DoubleColon => self.parse_enum_variant(expr)?,
+            TokenType::LParen => self.parse_call(expr)?,
+            TokenType::Dot => self.parse_field_access(expr)?,
+            TokenType::LBracket => self.parse_index(expr)?,
+            // NEW: Handle struct literals like Radius { r: 3 }
+            TokenType::LBrace if matches!(expr, Expr::Identifier(_)) => {
+                self.parse_struct_literal(expr)?
+            }
+            _ => break,
+        };
     }
+
+    Ok(expr)
+}
+
+fn parse_struct_literal(&mut self, name_expr: Expr) -> EtherResult<Expr> {
+    let Expr::Identifier(struct_name) = name_expr else {
+        return Err(self.error("Struct literal requires a struct name"));
+    };
+
+    self.expect(TokenType::LBrace)?;
+    let mut fields = Vec::new();
+
+    if !self.check(&TokenType::RBrace) {
+        loop {
+            let field_name = self.expect_identifier()?;
+            self.expect(TokenType::Colon)?;
+            // Use parse_assignment to stop at commas
+            let field_value = self.parse_assignment()?;
+            fields.push((field_name, field_value));
+
+            if !self.consume(TokenType::Comma) {
+                break;
+            }
+        }
+    }
+
+    self.expect(TokenType::RBrace)?;
+    Ok(Expr::StructLiteral(struct_name, fields))
+}
 
     fn parse_enum_variant(&mut self, expr: Expr) -> EtherResult<Expr> {
         let Expr::Identifier(enum_name) = expr else {
