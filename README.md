@@ -1,6 +1,6 @@
 A statically typed functional programming language highly based on rust and haskell.
 
-Currently is only implemented with minimal functionalities, has major vibecoded portions, will try to rewrite in the future.
+Currently is only implemented with minimal functionalities, has *major vibecoded portions* , will try to rewrite in the future.
 
 Features:
 - Has support for strongly typed enums.
